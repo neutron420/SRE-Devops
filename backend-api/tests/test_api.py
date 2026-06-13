@@ -91,3 +91,15 @@ def test_ask_endpoint(test_client):
     data = response.json()
     assert "answer" in data
     assert "sources" in data
+
+
+def test_history_endpoint(test_client):
+    """
+    Test GET /history returns past SRE runs or 503 if database is disabled.
+    """
+    response = test_client.get("/history")
+    assert response.status_code in [200, 503]
+    if response.status_code == 200:
+        data = response.json()
+        assert isinstance(data, list)
+

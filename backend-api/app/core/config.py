@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -8,6 +9,19 @@ class Settings(BaseSettings):
     CHROMADB_PERSIST_DIRECTORY: str = "./vector-db/chroma_data"
     MOCK_MODE: bool = True
     K8S_NAMESPACE: str = "default"
+    
+    DATABASE_URL: Optional[str] = None
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_DB: str = "devops_copilot"
+    POSTGRES_HOST: str = "db"
+    POSTGRES_PORT: int = 5432
+    
+    @property
+    def database_url(self) -> str:
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
     
     # Customizable PromQL queries
     PROM_QUERY_CPU: str = 'sum(rate(container_cpu_usage_seconds_total{container!="", pod=~"{service_name}.*"}[5m])) by (pod)'

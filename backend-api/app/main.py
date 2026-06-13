@@ -2,7 +2,7 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -13,6 +13,8 @@ from app.models.schemas import (
     SearchDocsRequest, SearchDocsResponse, SearchResult,
     AskRequest, AskResponse, HealthResponse
 )
+from app.core.database import SQLALCHEMY_AVAILABLE, get_db, engine
+from app.models.db_models import IncidentDiagnosis
 from app.services.rag_service import RAGService
 from app.agents.sre_workflow import SREWorkflow, get_llm
 
@@ -27,6 +29,15 @@ logger = logging.getLogger("devops-copilot-api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up FastAPI application...")
+    if SQLALCHEMY_AVAILABLE and engine is not None:
+        try:
+            logger.info("Creating database tables if they do not exist...")
+            from app.core.database import Base
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database tables verified.")
+        except Exception as e:
+            logger.error(f"Failed to create database tables: {str(e)}")
+            
     try:
         # Seed ChromaDB with initial runbooks
         logger.info("Initializing SRE knowledge base seeding...")
@@ -122,12 +133,34 @@ async def health():
     )
 
 @app.post("/diagnose", response_model=DiagnoseResponse)
-async def diagnose(request: DiagnoseRequest):
+async def diagnose(request: DiagnoseRequest, db=Depends(get_db)):
     """
     Executes SRE multi-agent diagnosis pipeline on Kubernetes service logs and metrics.
     """
     try:
         report = sre_workflow.run_diagnosis(request.service_name)
+        
+        # Save diagnosis result to database audit log if active
+        if db is not None:
+            try:
+                import json
+                pods_str = json.dumps(report["pod_status"])
+                db_report = IncidentDiagnosis(
+                    service_name=report["service_name"],
+                    pod_status=pods_str,
+                    log_analysis=report["log_analysis"],
+                    metrics_analysis=report["metrics_analysis"],
+                    runbook_matched="True" if report["runbook_matched"] else "False",
+                    root_cause=report["root_cause"],
+                    recommendations=report["recommendations"],
+                    confidence_score=float(report["confidence_score"])
+                )
+                db.add(db_report)
+                db.commit()
+                logger.info(f"Saved SRE diagnosis run for '{request.service_name}' to PostgreSQL audit log.")
+            except Exception as db_err:
+                logger.error(f"Database audit log persistence failed: {str(db_err)}")
+                
         return DiagnoseResponse(
             service_name=report["service_name"],
             pod_status=report["pod_status"],
@@ -143,6 +176,46 @@ async def diagnose(request: DiagnoseRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Diagnostic pipeline error: {str(e)}"
+        )
+
+@app.get("/history")
+async def get_history(service_name: Optional[str] = None, limit: int = 10, skip: int = 0, db=Depends(get_db)):
+    """
+    Retrieves the SRE diagnostic run history from the database audit log.
+    """
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database persistence is not active or database packages (SQLAlchemy) are missing."
+        )
+    try:
+        query = db.query(IncidentDiagnosis)
+        if service_name:
+            query = query.filter(IncidentDiagnosis.service_name == service_name)
+        diagnoses = query.order_by(IncidentDiagnosis.timestamp.desc()).offset(skip).limit(limit).all()
+        return [diag.to_dict() for diag in diagnoses]
+    except Exception as e:
+        logger.error(f"Failed to fetch diagnosis audit logs from database: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve history logs: {str(e)}"
+        )
+
+@app.get("/pod-status/{service_name}")
+async def get_pod_status(service_name: str):
+    """
+    Lightweight pod status check — no AI diagnosis, no Gemini API calls.
+    Used by the bot's background alert monitor to check pod health efficiently.
+    """
+    try:
+        from app.services.k8s_service import K8sService
+        k8s = K8sService()
+        return k8s.get_pod_status(service_name)
+    except Exception as e:
+        logger.error(f"Error fetching pod status for {service_name}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Pod status check failed: {str(e)}"
         )
 
 @app.get("/deployments", response_model=List[str])

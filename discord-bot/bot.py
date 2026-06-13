@@ -26,6 +26,7 @@ class DevOpsCopilotBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         # Slash commands don't require privileged intents
+        super().__init__(command_prefix="!", intents=intents)
         self.alerted_pods = {}
         
     async def setup_hook(self):
@@ -39,7 +40,7 @@ class DevOpsCopilotBot(commands.Bot):
         except Exception as e:
             logger.error(f"Failed to sync slash commands: {str(e)}")
 
-    @tasks.loop(minutes=2)
+    @tasks.loop(minutes=5)
     async def check_sre_alerts(self):
         alert_channel_id = os.getenv("DISCORD_ALERT_CHANNEL_ID")
         if not alert_channel_id or alert_channel_id == "your_discord_channel_id_here":
@@ -74,10 +75,10 @@ class DevOpsCopilotBot(commands.Bot):
                     if svc in ["sre-backend", "sre-discord-bot"]:
                         continue
 
-                    resp = await client.post(f"{BACKEND_API_URL}/diagnose", json={"service_name": svc})
+                    # Use lightweight /pod-status (NO Gemini API calls) instead of /diagnose
+                    resp = await client.get(f"{BACKEND_API_URL}/pod-status/{svc}")
                     if resp.status_code == 200:
-                        report = resp.json()
-                        pod_data = report.get("pod_status", {})
+                        pod_data = resp.json()
                         pods = pod_data.get("pods", [])
                         
                         # Handle case where pods is a dictionary/error object
@@ -94,15 +95,13 @@ class DevOpsCopilotBot(commands.Bot):
                                     
                                     embed = discord.Embed(
                                         title=f"🚨 SRE ALERT: Unhealthy Pod in `{svc}`!",
-                                        description=f"An active cluster incident has been detected in the service **`{svc}`**.",
+                                        description=f"An active cluster incident has been detected in the service **`{svc}`**.\nRun `/diagnose {svc}` for full AI root cause analysis.",
                                         color=discord.Color.from_rgb(203, 67, 53)  # Vibrant Crimson Red
                                     )
                                     embed.add_field(name="📌 Pod Name", value=f"`{p['name']}`", inline=True)
                                     embed.add_field(name="🔴 Status Phase", value=f"**`{p['status']}`**", inline=True)
                                     embed.add_field(name="🔄 Restarts", value=f"`{p['restart_count']}`", inline=True)
-                                    embed.add_field(name="🕵️ AI Root Cause Analysis", value=truncate_text(report.get("root_cause", "Analysis pending"), 1000), inline=False)
-                                    embed.add_field(name="🛠️ Actionable Remediation", value=truncate_text(report.get("recommendations", "Run manual diagnostics"), 1000), inline=False)
-                                    embed.set_footer(text="SRE DevOps Alerts System • Real-Time Monitoring")
+                                    embed.set_footer(text="SRE DevOps Alerts System • Use /diagnose for full AI analysis")
                                     await channel.send(embed=embed)
                                     
                             elif status_lower == "running" and p["name"] in self.alerted_pods:
@@ -474,6 +473,58 @@ async def ask_command(interaction: discord.Interaction, question: str):
     except Exception as e:
         logger.error(f"Ask command failed: {str(e)}")
         await interaction.followup.send(content="❌ Network error: Could not contact SRE Assistant backend.")
+
+
+@bot.tree.command(name="history", description="Fetches past SRE diagnostic runs from the database.")
+@app_commands.describe(
+    service="Optional filter by service name",
+    limit="Max number of runs to fetch (default: 5)"
+)
+async def history_command(interaction: discord.Interaction, service: Optional[str] = None, limit: int = 5):
+    await interaction.response.defer()
+    
+    try:
+        params = {"limit": limit}
+        if service:
+            params["service_name"] = service
+            
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{BACKEND_API_URL}/history", params=params)
+            
+        if resp.status_code == 200:
+            history = resp.json()
+            if not history:
+                await interaction.followup.send(content="📜 No SRE diagnostic history found in the database.")
+                return
+                
+            embed = discord.Embed(
+                title="📜 SRE Diagnostic History Log",
+                color=discord.Color.from_rgb(46, 134, 193)  # Lighter Blue
+            )
+            for item in history:
+                timestamp = item.get("timestamp", "Unknown")
+                if timestamp != "Unknown" and "T" in timestamp:
+                    timestamp = timestamp.split(".")[0].replace("T", " ")
+                    
+                svc_name = item.get("service_name", "Unknown")
+                rc = item.get("root_cause", "No analysis")
+                if len(rc) > 150:
+                    rc = rc[:147] + "..."
+                    
+                embed.add_field(
+                    name=f"Service: `{svc_name}` • {timestamp}",
+                    value=f"**Confidence**: {int(item.get('confidence_score', 0.0) * 100)}%\n**Root Cause**: {rc}",
+                    inline=False
+                )
+            await interaction.followup.send(embed=embed)
+        elif resp.status_code == 503:
+            await interaction.followup.send(content="❌ History log is unavailable: Database persistence is disabled.")
+        else:
+            await interaction.followup.send(content=f"❌ Failed to retrieve history: Backend returned status {resp.status_code}.")
+    except Exception as e:
+        logger.error(f"History command failed: {str(e)}")
+        await interaction.followup.send(content="❌ Network error: Could not reach the backend API.")
+
 
 # Direct execution capability
 if __name__ == "__main__":
