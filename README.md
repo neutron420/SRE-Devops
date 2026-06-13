@@ -1,4 +1,4 @@
-# AI DevOps SRE Copilot (Production-Grade Portfolio Project)
+# AI DevOps SRE Copilot
 
 An intelligent, AI-powered Site Reliability Engineering (SRE) assistant that operates through **Discord** (extensible to Slack) to help developers diagnose infrastructure issues, analyze logs, inspect system metrics, search troubleshooting runbooks, and provide automated root cause analysis.
 
