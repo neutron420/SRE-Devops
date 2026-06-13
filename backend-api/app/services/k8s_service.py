@@ -3,6 +3,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +14,14 @@ class K8sService:
     """
 
     def __init__(self):
-        self.namespace = os.getenv("K8S_NAMESPACE", "default")
+        self.namespace = settings.K8S_NAMESPACE
         self.k8s_connected = False
+        self.mock_mode = settings.MOCK_MODE
         
+        if self.mock_mode:
+            logger.info("K8sService is running in MOCK mode. Live cluster calls are bypassed.")
+            return
+            
         try:
             # Try loading incluster config (when running inside a Kubernetes Pod)
             config.load_incluster_config()
@@ -44,6 +50,73 @@ class K8sService:
         """
         Queries Kubernetes API in real-time to retrieve pod statuses for the service.
         """
+        if self.mock_mode:
+            pods = []
+            if service_name == "payment-service":
+                pods = [
+                    {
+                        "name": "payment-service-5f9f8c6b9b-abc12",
+                        "status": "CrashLoopBackOff",
+                        "restart_count": 8,
+                        "ready": "0/1",
+                        "ip": "10.244.1.45",
+                        "node": "node-worker-1",
+                        "created_at": "2026-06-13T10:00:00Z"
+                    }
+                ]
+            elif service_name == "analytics-service":
+                pods = [
+                    {
+                        "name": "analytics-service-9d8f7c6b5a-xyz34",
+                        "status": "OOMKilled",
+                        "restart_count": 3,
+                        "ready": "0/1",
+                        "ip": "10.244.1.46",
+                        "node": "node-worker-2",
+                        "created_at": "2026-06-13T10:00:00Z"
+                    }
+                ]
+            elif service_name == "frontend-service":
+                pods = [
+                    {
+                        "name": "frontend-service-8f7e6d5c4b-def56",
+                        "status": "Running",
+                        "restart_count": 0,
+                        "ready": "1/1",
+                        "ip": "10.244.1.47",
+                        "node": "node-worker-1",
+                        "created_at": "2026-06-13T10:00:00Z"
+                    }
+                ]
+            elif service_name == "auth-service":
+                pods = [
+                    {
+                        "name": "auth-service-7f6e5d4c3b-ghi78",
+                        "status": "Running",
+                        "restart_count": 0,
+                        "ready": "1/1",
+                        "ip": "10.244.1.48",
+                        "node": "node-worker-2",
+                        "created_at": "2026-06-13T10:00:00Z"
+                    }
+                ]
+            else:
+                pods = [
+                    {
+                        "name": f"{service_name}-6f5e4d3c2b-jkl90",
+                        "status": "Running",
+                        "restart_count": 0,
+                        "ready": "1/1",
+                        "ip": "10.244.1.99",
+                        "node": "node-worker-1",
+                        "created_at": "2026-06-13T10:00:00Z"
+                    }
+                ]
+            return {
+                "service": service_name,
+                "pods": pods
+            }
+
         self._check_connection()
         logger.info(f"Querying cluster pods for service: '{service_name}' in namespace '{self.namespace}'")
         
@@ -112,6 +185,19 @@ class K8sService:
         """
         Queries Kubernetes API in real-time to fetch deployment specs.
         """
+        if self.mock_mode:
+            desired = 3
+            available = 3
+            if service_name in ["payment-service", "analytics-service"]:
+                available = 2
+            return {
+                "name": service_name,
+                "replicas_desired": desired,
+                "replicas_available": available,
+                "replicas_updated": desired,
+                "strategy": "RollingUpdate"
+            }
+
         self._check_connection()
         logger.info(f"Querying deployment status for: '{service_name}'")
         
@@ -140,6 +226,25 @@ class K8sService:
         """
         Queries Kubernetes events for the service's pods in real-time.
         """
+        if self.mock_mode:
+            if service_name == "payment-service":
+                return [
+                    {"type": "Warning", "reason": "BackOff", "message": "Back-off restarting failed container"},
+                    {"type": "Normal", "reason": "Scheduled", "message": "Successfully assigned default/payment-service-5f9f8c6b9b-abc12 to node-worker-1"}
+                ]
+            elif service_name == "analytics-service":
+                return [
+                    {"type": "Warning", "reason": "OOMKilled", "message": "System memory limit exceeded"},
+                    {"type": "Normal", "reason": "Created", "message": "Created container analytics-service"}
+                ]
+            elif service_name == "frontend-service":
+                return [
+                    {"type": "Normal", "reason": "Started", "message": "Started container frontend-service"}
+                ]
+            return [
+                {"type": "Normal", "reason": "Started", "message": f"Started container {service_name}"}
+            ]
+
         self._check_connection()
         logger.info(f"Querying cluster events for service: '{service_name}'")
         
@@ -172,6 +277,41 @@ class K8sService:
         Retrieves live log streams from the first active pod of the service,
         with optional timeframe (since_seconds) and string query filters.
         """
+        if self.mock_mode:
+            pod_name = f"{service_name}-mock-pod"
+            logs = ""
+            if service_name == "payment-service":
+                logs = (
+                    "2026-06-13T12:00:40Z [INFO] Initializing connection pool...\n"
+                    "2026-06-13T12:00:45Z [ERROR] Failed to connect to database: Connection timeout after 30 seconds.\n"
+                    "2026-06-13T12:00:45Z [WARNING] Retrying database connection in 5 seconds...\n"
+                )
+            elif service_name == "analytics-service":
+                logs = (
+                    "2026-06-13T12:05:00Z [INFO] Starting event processing batch of 250,000 items...\n"
+                    "2026-06-13T12:05:05Z [INFO] Heap memory usage exceeding 90%...\n"
+                    "2026-06-13T12:05:10Z [FATAL] OutOfMemory: Java heap space. Exceeded memory limit of 512MiB.\n"
+                )
+            elif service_name == "frontend-service":
+                logs = (
+                    "2026-06-13T12:09:55Z [INFO] Incoming GET /dashboard request from 192.168.1.100\n"
+                    "2026-06-13T12:10:00Z [WARNING] Gateway Timeout (504) received while calling downstream service: payment-service.\n"
+                )
+            elif service_name == "auth-service":
+                logs = (
+                    "2026-06-13T12:14:59Z [INFO] Incoming POST /login request\n"
+                    "2026-06-13T12:15:00Z [INFO] Successfully authenticated user session. Request processed in 15ms.\n"
+                )
+            else:
+                logs = f"2026-06-13T12:20:00Z [INFO] Service {service_name} is healthy and running operational checks.\n"
+                
+            if query_filter:
+                lines = logs.strip().split("\n")
+                filtered_lines = [line for line in lines if query_filter.lower() in line.lower()]
+                logs = "\n".join(filtered_lines)
+                
+            return f"--- Log dump from pod {pod_name} ---\n" + logs
+
         self._check_connection()
         logger.info(f"Querying live pod logs for service: '{service_name}' (since_seconds={since_seconds}, query_filter={query_filter})")
         
@@ -228,6 +368,9 @@ class K8sService:
         """
         Lists all deployment names in the namespace.
         """
+        if self.mock_mode:
+            return ["payment-service", "auth-service", "analytics-service", "frontend-service"]
+
         self._check_connection()
         try:
             apps_v1 = client.AppsV1Api()

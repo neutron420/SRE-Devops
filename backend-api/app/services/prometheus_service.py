@@ -3,6 +3,7 @@ import time
 import logging
 from typing import Dict, List, Any
 import httpx
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,8 @@ class PrometheusService:
 
     def __init__(self):
         self.prometheus_url = os.getenv("PROMETHEUS_URL", "http://localhost:9090").rstrip("/")
-        logger.info(f"Prometheus Service initialized with endpoint: {self.prometheus_url}")
+        self.mock_mode = settings.MOCK_MODE
+        logger.info(f"Prometheus Service initialized (mock_mode={self.mock_mode}, url={self.prometheus_url})")
 
     def _query_range(self, query: str, duration_hours: int = 1, step_seconds: int = 60) -> List[Dict[str, Any]]:
         """
@@ -75,14 +77,24 @@ class PrometheusService:
         """
         Queries actual CPU usage rate (cores or percentage) for pods in the service.
         """
-        # Sum rate of CPU usage for pods matching service name
-        query = f'sum(rate(container_cpu_usage_seconds_total{{container!="", pod=~"{service_name}.*"}}[5m])) by (pod)'
+        if self.mock_mode:
+            val = 0.05
+            if service_name == "payment-service":
+                val = 0.12
+            elif service_name == "analytics-service":
+                val = 0.82
+            elif service_name == "frontend-service":
+                val = 0.22
+            return {
+                "metric": "container_cpu_usage_seconds_total",
+                "service": service_name,
+                "unit": "cores/rate",
+                "values": [{"timestamp": int(time.time()), "value": val}]
+            }
+
+        # Sum rate of CPU usage for pods matching service name from settings template
+        query = settings.PROM_QUERY_CPU.replace("{service_name}", service_name)
         values = self._query_range(query, duration_hours)
-        
-        # If empty, try a broader query (ignoring container name)
-        if not values:
-            query = f'sum(rate(container_cpu_usage_seconds_total{{pod=~"{service_name}.*"}}[5m]))'
-            values = self._query_range(query, duration_hours)
 
         return {
             "metric": "container_cpu_usage_seconds_total",
@@ -95,17 +107,33 @@ class PrometheusService:
         """
         Queries actual working set memory usage in MiB.
         """
+        if self.mock_mode:
+            val = 120.0
+            limit = 512.0
+            if service_name == "payment-service":
+                val = 180.0
+            elif service_name == "analytics-service":
+                val = 512.0
+            elif service_name == "frontend-service":
+                val = 220.0
+            elif service_name == "auth-service":
+                val = 80.0
+                limit = 256.0
+            return {
+                "metric": "container_memory_working_set_bytes",
+                "service": service_name,
+                "unit": "MiB",
+                "limit_mib": limit,
+                "values": [{"timestamp": int(time.time()), "value": val}]
+            }
+
         # Sum memory usage and convert bytes to MiB
-        query = f'sum(container_memory_working_set_bytes{{container!="", pod=~"{service_name}.*"}}) / 1024 / 1024'
+        query = settings.PROM_QUERY_MEMORY.replace("{service_name}", service_name)
         values = self._query_range(query, duration_hours)
-        
-        if not values:
-            query = f'sum(container_memory_working_set_bytes{{pod=~"{service_name}.*"}}) / 1024 / 1024'
-            values = self._query_range(query, duration_hours)
 
         # Retrieve namespace limit (fallback to 512 if unavailable)
         limit_mib = 512.0
-        limit_query = f'sum(container_spec_memory_limit_bytes{{container!="", pod=~"{service_name}.*"}}) / 1024 / 1024'
+        limit_query = settings.PROM_QUERY_MEMORY_LIMIT.replace("{service_name}", service_name)
         limit_values = self._query_range(limit_query, duration_hours)
         if limit_values and limit_values[-1]["value"] > 0:
             limit_mib = limit_values[-1]["value"]
@@ -122,10 +150,24 @@ class PrometheusService:
         """
         Queries request latency (ms) by dividing http duration sum by total count.
         """
-        query = (
-            f'sum(rate(http_request_duration_seconds_sum{{pod=~"{service_name}.*"}}[5m])) '
-            f'/ sum(rate(http_request_duration_seconds_count{{pod=~"{service_name}.*"}}[5m])) * 1000'
-        )
+        if self.mock_mode:
+            val = 50.0
+            if service_name == "payment-service":
+                val = 30000.0
+            elif service_name == "analytics-service":
+                val = 450.0
+            elif service_name == "frontend-service":
+                val = 5000.0
+            elif service_name == "auth-service":
+                val = 12.0
+            return {
+                "metric": "http_request_duration_seconds",
+                "service": service_name,
+                "unit": "ms",
+                "values": [{"timestamp": int(time.time()), "value": val}]
+            }
+
+        query = settings.PROM_QUERY_LATENCY.replace("{service_name}", service_name)
         values = self._query_range(query, duration_hours)
 
         return {
@@ -139,10 +181,24 @@ class PrometheusService:
         """
         Queries request HTTP error rates as a percentage.
         """
-        query = (
-            f'sum(rate(http_requests_failed_total{{pod=~"{service_name}.*"}}[5m])) '
-            f'/ sum(rate(http_requests_total{{pod=~"{service_name}.*"}}[5m])) * 100'
-        )
+        if self.mock_mode:
+            val = 0.0
+            if service_name == "payment-service":
+                val = 100.0
+            elif service_name == "analytics-service":
+                val = 10.0
+            elif service_name == "frontend-service":
+                val = 100.0
+            elif service_name == "auth-service":
+                val = 0.0
+            return {
+                "metric": "http_requests_failed_total",
+                "service": service_name,
+                "unit": "percent",
+                "values": [{"timestamp": int(time.time()), "value": val}]
+            }
+
+        query = settings.PROM_QUERY_ERROR_RATE.replace("{service_name}", service_name)
         values = self._query_range(query, duration_hours)
 
         return {
