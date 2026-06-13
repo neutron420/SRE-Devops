@@ -35,7 +35,8 @@ def get_llm():
         return ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=api_key,
-            temperature=0.1
+            temperature=0.1,
+            max_retries=0
         )
     except Exception as e:
         logger.error(f"Error initializing Google Gemini LLM: {str(e)}")

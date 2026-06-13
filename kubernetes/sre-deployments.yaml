@@ -53,6 +53,11 @@ spec:
             secretKeyRef:
               name: copilot-secrets
               key: GEMINI_API_KEY
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: copilot-secrets
+              key: DATABASE_URL
         - name: PROMETHEUS_URL
           value: "http://prometheus:9090"
         - name: K8S_NAMESPACE
