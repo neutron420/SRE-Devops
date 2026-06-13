@@ -327,9 +327,15 @@ class SREWorkflow:
     Orchestrates the entire multi-agent LangGraph workflow.
     """
 
+    @property
+    def k8s(self):
+        return K8sService()
+
+    @property
+    def prometheus(self):
+        return PrometheusService()
+
     def __init__(self):
-        self.k8s = K8sService()
-        self.prometheus = PrometheusService()
         
         # Build the graph
         workflow = StateGraph(SREState)

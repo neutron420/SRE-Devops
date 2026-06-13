@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 # Inject test environment variables before importing the FastAPI app
-os.environ["GEMINI_API_KEY"] = "mock_key_for_testing"
+os.environ["GEMINI_API_KEY"] = "your_gemini_api_key_here"
 os.environ["CHROMADB_PERSIST_DIRECTORY"] = "./vector-db/test_chroma_data"
 os.environ["BACKEND_HOST"] = "127.0.0.1"
 os.environ["BACKEND_PORT"] = "8000"
@@ -51,6 +51,7 @@ def mock_k8s_service(monkeypatch):
     
     # Apply monkeypatch to return the mock instance upon initialization
     monkeypatch.setattr("app.services.k8s_service.K8sService", lambda: mock_instance)
+    monkeypatch.setattr("app.agents.sre_workflow.K8sService", lambda: mock_instance)
     return mock_instance
 
 @pytest.fixture(autouse=True)
@@ -68,6 +69,7 @@ def mock_prometheus_service(monkeypatch):
     }
     
     monkeypatch.setattr("app.services.prometheus_service.PrometheusService", lambda: mock_instance)
+    monkeypatch.setattr("app.agents.sre_workflow.PrometheusService", lambda: mock_instance)
     return mock_instance
 
 # Import app after environment is set up and services are patched
