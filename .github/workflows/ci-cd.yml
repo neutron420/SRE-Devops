@@ -38,7 +38,7 @@ jobs:
         CHROMADB_PERSIST_DIRECTORY: "./vector-db/test_chroma_data"
       run: |
         cd backend-api
-        pytest
+        python -m pytest
 
   docker-build:
     name: Build Docker Images
