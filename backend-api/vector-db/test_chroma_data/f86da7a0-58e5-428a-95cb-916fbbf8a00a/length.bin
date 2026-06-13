@@ -1,0 +1,13 @@
+## Diagnostics Steps
+1. Verify the pod can resolve the database hostname:
+   ```bash
+   kubectl exec -it <pod-name> -- nslookup postgres-db
+   ```
+2. Verify TCP connection capability using netcat:
+   ```bash
+   kubectl exec -it <pod-name> -- nc -zvw3 postgres-db 5432
+   ```
+3. Check PostgreSQL connection status:
+   ```sql
+   SELECT count(*), state FROM pg_stat_activity GROUP BY state;
+   ```ÿÿÿÿÿÿ

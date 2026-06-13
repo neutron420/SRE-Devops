@@ -1,0 +1,12 @@
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+vector-db/chroma_data/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/vector-db/chroma_data/

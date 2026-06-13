@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sre-chroma-pvc
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+# SRE API Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: sre-backend-service
+  namespace: default
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+  selector:
+    app: sre-backend
+---
+# SRE API Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-backend
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sre-backend
+  template:
+    metadata:
+      labels:
+        app: sre-backend
+    spec:
+      # Associate with RBAC ServiceAccount to enable Kubernetes API querying
+      serviceAccountName: sre-copilot-sa
+      containers:
+      - name: backend
+        image: devops-copilot-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        env:
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: copilot-secrets
+              key: GEMINI_API_KEY
+        - name: PROMETHEUS_URL
+          value: "http://prometheus:9090"
+        - name: K8S_NAMESPACE
+          value: "default"
+        - name: CHROMADB_PERSIST_DIRECTORY
+          value: "/app/vector-db/chroma_data"
+        volumeMounts:
+        - name: chroma-volume
+          mountPath: /app/vector-db/chroma_data
+      volumes:
+      - name: chroma-volume
+        persistentVolumeClaim:
+          claimName: sre-chroma-pvc
+---
+# Discord SRE Bot Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-discord-bot
+  namespace: default
+spec:
+  replicas: 1 # Set to 1 replica to prevent duplicate slash command responses
+  selector:
+    matchLabels:
+      app: sre-discord-bot
+  template:
+    metadata:
+      labels:
+        app: sre-discord-bot
+    spec:
+      containers:
+      - name: bot
+        image: devops-copilot-bot:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: DISCORD_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: copilot-secrets
+              key: DISCORD_TOKEN
+        - name: DISCORD_ALERT_CHANNEL_ID
+          value: "1515336497258037290"
+        - name: BACKEND_API_URL
+          value: "http://sre-backend-service:8000"

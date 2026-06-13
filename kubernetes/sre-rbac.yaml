@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sre-copilot-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sre-copilot-role
+rules:
+- apiGroups: [""]
+  # Core resources for pod state, container log streaming, and lifecycle events
+  resources: ["pods", "pods/log", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  # Apps resources to retrieve service deployment metadata configurations
+  resources: ["deployments"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sre-copilot-role-binding
+subjects:
+- kind: ServiceAccount
+  name: sre-copilot-sa
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: sre-copilot-role
+  apiGroup: rbac.authorization.k8s.io
