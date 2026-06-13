@@ -176,12 +176,12 @@ async def help_command(interaction: discord.Interaction):
     )
 
     embed.set_footer(text="DevOps Copilot • Powered by LangGraph & Gemini 2.5 Flash")
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="status", description="Checks the health and status of the Copilot system services.")
 async def status_command(interaction: discord.Interaction):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -250,7 +250,7 @@ def parse_timeframe(tf_str: str) -> int:
     timeframe="Time range to look back (e.g., 30m, 2h, 3d, 1w). Default: 1h"
 )
 async def logs_command(interaction: discord.Interaction, service: str, query: Optional[str] = None, timeframe: str = "1h"):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     
     since_seconds = parse_timeframe(timeframe)
     
@@ -299,7 +299,7 @@ async def logs_command(interaction: discord.Interaction, service: str, query: Op
 @app_commands.describe(service="The Kubernetes service name to diagnose (e.g., payment-service)")
 async def diagnose_command(interaction: discord.Interaction, service: str):
     # Defer is critical: SRE analysis graph can take 5-15 seconds to execute
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -356,7 +356,7 @@ async def diagnose_command(interaction: discord.Interaction, service: str):
 @bot.tree.command(name="explain-error", description="Explains a log error message or stack trace.")
 @app_commands.describe(error="The error text or log entry to explain")
 async def explain_error_command(interaction: discord.Interaction, error: str):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -396,7 +396,7 @@ async def explain_error_command(interaction: discord.Interaction, error: str):
 @bot.tree.command(name="search-docs", description="Searches SRE runbooks for relevant documentation.")
 @app_commands.describe(query="Topic or query to search (e.g. database connection timeout)")
 async def search_docs_command(interaction: discord.Interaction, query: str):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -442,7 +442,7 @@ async def search_docs_command(interaction: discord.Interaction, query: str):
 @bot.tree.command(name="ask", description="Asks the SRE Assistant a general SRE/DevOps question.")
 @app_commands.describe(question="SRE question to ask (e.g., How do I troubleshoot an OOMKilled pod?)")
 async def ask_command(interaction: discord.Interaction, question: str):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     
     try:
         async with httpx.AsyncClient(timeout=25.0) as client:
@@ -481,7 +481,7 @@ async def ask_command(interaction: discord.Interaction, question: str):
     limit="Max number of runs to fetch (default: 5)"
 )
 async def history_command(interaction: discord.Interaction, service: Optional[str] = None, limit: int = 5):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     
     try:
         params = {"limit": limit}
