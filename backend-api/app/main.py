@@ -196,6 +196,12 @@ async def get_history(service_name: Optional[str] = None, limit: int = 10, skip:
         return [diag.to_dict() for diag in diagnoses]
     except Exception as e:
         logger.error(f"Failed to fetch diagnosis audit logs from database: {str(e)}")
+        from sqlalchemy.exc import OperationalError
+        if isinstance(e, OperationalError):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Database service is unavailable: {str(e)}"
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve history logs: {str(e)}"
