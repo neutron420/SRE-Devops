@@ -43,79 +43,85 @@ class DevOpsCopilotBot(commands.Bot):
     @tasks.loop(minutes=5)
     async def check_sre_alerts(self):
         alert_channel_id = os.getenv("DISCORD_ALERT_CHANNEL_ID")
-        if not alert_channel_id or alert_channel_id == "your_discord_channel_id_here":
-            return
-            
+        
         try:
-            channel = self.get_channel(int(alert_channel_id))
-            if not channel:
-                channel = await self.fetch_channel(int(alert_channel_id))
-                
-            if not channel:
-                logger.warning(f"Could not locate alert channel with ID: {alert_channel_id}")
-                return
-                
-            logger.info("Executing proactive SRE health checks on discovered deployments...")
             async with httpx.AsyncClient(timeout=20.0) as client:
-                # Dynamic service discovery
-                try:
-                    deploy_resp = await client.get(f"{BACKEND_API_URL}/deployments")
-                    if deploy_resp.status_code == 200:
-                        services = deploy_resp.json()
-                        logger.info(f"Dynamically discovered deployments: {services}")
-                    else:
-                        logger.warning(f"Failed to fetch deployments from API ({deploy_resp.status_code}). Using static fallback.")
-                        services = ["payment-service", "auth-service", "analytics-service", "frontend-service"]
-                except Exception as e:
-                    logger.error(f"Deployments discovery request failed: {str(e)}. Using static fallback.")
-                    services = ["payment-service", "auth-service", "analytics-service", "frontend-service"]
-
-                for svc in services:
-                    # Ignore the bot and backend themselves if they show up in deployment list
-                    if svc in ["sre-backend", "sre-discord-bot"]:
-                        continue
-
-                    # Use lightweight /pod-status (NO Gemini API calls) instead of /diagnose
-                    resp = await client.get(f"{BACKEND_API_URL}/pod-status/{svc}")
-                    if resp.status_code == 200:
-                        pod_data = resp.json()
-                        pods = pod_data.get("pods", [])
+                for guild in self.guilds:
+                    guild_id_str = str(guild.id)
+                    headers = {"X-Guild-ID": guild_id_str}
+                    
+                    # Locate alert channel in this guild
+                    channel = None
+                    if alert_channel_id and alert_channel_id != "your_discord_channel_id_here":
+                        try:
+                            channel = guild.get_channel(int(alert_channel_id))
+                        except Exception:
+                            pass
+                    
+                    if not channel:
+                        channel = discord.utils.get(guild.text_channels, name="sre-alerts")
                         
-                        # Handle case where pods is a dictionary/error object
-                        if not isinstance(pods, list):
+                    if not channel:
+                        continue
+                        
+                    logger.info(f"Executing proactive SRE health checks for guild {guild.name} ({guild_id_str})...")
+                    
+                    # Dynamic service discovery
+                    try:
+                        deploy_resp = await client.get(f"{BACKEND_API_URL}/deployments", headers=headers)
+                        if deploy_resp.status_code == 200:
+                            services = deploy_resp.json()
+                        else:
+                            services = ["payment-service", "auth-service", "analytics-service", "frontend-service"]
+                    except Exception as e:
+                        logger.error(f"Deployments discovery request failed for guild {guild_id_str}: {str(e)}")
+                        services = ["payment-service", "auth-service", "analytics-service", "frontend-service"]
+
+                    for svc in services:
+                        if svc in ["sre-backend", "sre-discord-bot"]:
                             continue
 
-                        for p in pods:
-                            status_lower = p["status"].lower()
-                            # Alert on common failing states
-                            if status_lower in ["crashloopbackoff", "oomkilled", "error", "failed", "imagepullbackoff", "backoff"]:
-                                # Avoid repeating alert if state hasn't changed
-                                if self.alerted_pods.get(p["name"]) != p["status"]:
-                                    self.alerted_pods[p["name"]] = p["status"]
+                        # Use lightweight /pod-status
+                        try:
+                            resp = await client.get(f"{BACKEND_API_URL}/pod-status/{svc}", headers=headers)
+                            if resp.status_code == 200:
+                                pod_data = resp.json()
+                                pods = pod_data.get("pods", [])
+                                if not isinstance(pods, list):
+                                    continue
+
+                                for p in pods:
+                                    status_lower = p["status"].lower()
+                                    alert_key = f"{guild_id_str}_{p['name']}"
                                     
-                                    embed = discord.Embed(
-                                        title=f"🚨 SRE ALERT: Unhealthy Pod in `{svc}`!",
-                                        description=f"An active cluster incident has been detected in the service **`{svc}`**.\nRun `/diagnose {svc}` for full AI root cause analysis.",
-                                        color=discord.Color.from_rgb(203, 67, 53)  # Vibrant Crimson Red
-                                    )
-                                    embed.add_field(name="📌 Pod Name", value=f"`{p['name']}`", inline=True)
-                                    embed.add_field(name="🔴 Status Phase", value=f"**`{p['status']}`**", inline=True)
-                                    embed.add_field(name="🔄 Restarts", value=f"`{p['restart_count']}`", inline=True)
-                                    embed.set_footer(text="SRE DevOps Alerts System • Use /diagnose for full AI analysis")
-                                    await channel.send(embed=embed)
-                                    
-                            elif status_lower == "running" and p["name"] in self.alerted_pods:
-                                # Recovered!
-                                del self.alerted_pods[p["name"]]
-                                embed = discord.Embed(
-                                    title=f"🟢 SRE RECOVERY: Pod `{p['name']}` is Healthy!",
-                                    description=f"Service **`{svc}`** pod has successfully returned to standard **Running** state.",
-                                    color=discord.Color.from_rgb(39, 174, 96)  # Emerald Green
-                                )
-                                embed.add_field(name="📌 Pod Name", value=f"`{p['name']}`", inline=True)
-                                embed.add_field(name="Status", value="🟢 **Running**", inline=True)
-                                embed.set_footer(text="SRE DevOps Alerts System • Restored State")
-                                await channel.send(embed=embed)
+                                    if status_lower in ["crashloopbackoff", "oomkilled", "error", "failed", "imagepullbackoff", "backoff"]:
+                                        if self.alerted_pods.get(alert_key) != p["status"]:
+                                            self.alerted_pods[alert_key] = p["status"]
+                                            
+                                            embed = discord.Embed(
+                                                title=f"🚨 SRE ALERT: Unhealthy Pod in `{svc}`!",
+                                                description=f"An active cluster incident has been detected in the service **`{svc}`**.\nRun `/diagnose {svc}` for full AI root cause analysis.",
+                                                color=discord.Color.from_rgb(203, 67, 53)
+                                            )
+                                            embed.add_field(name="📌 Pod Name", value=f"`{p['name']}`", inline=True)
+                                            embed.add_field(name="🔴 Status Phase", value=f"**`{p['status']}`**", inline=True)
+                                            embed.add_field(name="🔄 Restarts", value=f"`{p['restart_count']}`", inline=True)
+                                            embed.set_footer(text="SRE DevOps Alerts System • Use /diagnose for full AI analysis")
+                                            await channel.send(embed=embed)
+                                            
+                                    elif status_lower == "running" and alert_key in self.alerted_pods:
+                                        del self.alerted_pods[alert_key]
+                                        embed = discord.Embed(
+                                            title=f"🟢 SRE RECOVERY: Pod `{p['name']}` is Healthy!",
+                                            description=f"Service **`{svc}`** pod has successfully returned to standard **Running** state.",
+                                            color=discord.Color.from_rgb(39, 174, 96)
+                                        )
+                                        embed.add_field(name="📌 Pod Name", value=f"`{p['name']}`", inline=True)
+                                        embed.add_field(name="Status", value="🟢 **Running**", inline=True)
+                                        embed.set_footer(text="SRE DevOps Alerts System • Restored State")
+                                        await channel.send(embed=embed)
+                        except Exception as e:
+                            logger.error(f"Error querying pod status for {svc} in guild {guild_id_str}: {str(e)}")
         except Exception as e:
             logger.error(f"Error in SRE Alerts background task: {str(e)}")
 
@@ -179,13 +185,65 @@ async def help_command(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+@bot.tree.command(name="setup", description="Uploads your Kubernetes kubeconfig file to monitor your cluster.")
+@app_commands.describe(
+    kubeconfig_file="The kubeconfig file for your cluster (usually named 'config')",
+    prometheus_url="Optional Prometheus Server URL (e.g. http://prometheus-service:9090)"
+)
+async def setup_command(interaction: discord.Interaction, kubeconfig_file: discord.Attachment, prometheus_url: Optional[str] = None):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(content="❌ Only Server Administrators can configure the cluster settings.", ephemeral=True)
+        return
+        
+    await interaction.response.defer(ephemeral=True)
+    
+    if kubeconfig_file.size > 5 * 1024 * 1024:
+        await interaction.followup.send(content="❌ Kubeconfig file is too large (max 5MB).", ephemeral=True)
+        return
+        
+    try:
+        content_bytes = await kubeconfig_file.read()
+        kubeconfig_text = content_bytes.decode("utf-8")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{BACKEND_API_URL}/setup-cluster",
+                json={
+                    "guild_id": str(interaction.guild_id),
+                    "kubeconfig": kubeconfig_text,
+                    "prometheus_url": prometheus_url
+                }
+            )
+            
+        if resp.status_code == 200:
+            embed = discord.Embed(
+                title="✅ Cluster Configured Successfully!",
+                description=(
+                    f"Your Kubernetes cluster configuration has been uploaded and encrypted.\n\n"
+                    f"• **Server (Guild) ID**: `{interaction.guild_id}`\n"
+                    f"• **Prometheus URL**: `{prometheus_url or 'Global Default'}`\n\n"
+                    f"You can now run commands like `/status` and `/diagnose` to monitor your cluster."
+                ),
+                color=discord.Color.green()
+            )
+            await interaction.followup.send(embed=embed)
+        else:
+            detail = resp.json().get("detail", "Unknown error")
+            await interaction.followup.send(content=f"❌ Configuration failed: {detail}")
+            
+    except Exception as e:
+        logger.error(f"Setup command failed: {str(e)}")
+        await interaction.followup.send(content=f"❌ Error uploading configuration: {str(e)}")
+
+
 @bot.tree.command(name="status", description="Checks the health and status of the Copilot system services.")
 async def status_command(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
     try:
+        headers = {"X-Guild-ID": str(interaction.guild_id)} if interaction.guild_id else {}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{BACKEND_API_URL}/health")
+            resp = await client.get(f"{BACKEND_API_URL}/health", headers=headers)
             
         if resp.status_code == 200:
             data = resp.json()
@@ -261,8 +319,9 @@ async def logs_command(interaction: discord.Interaction, service: str, query: Op
         if query:
             params["query"] = query
             
+        headers = {"X-Guild-ID": str(interaction.guild_id)} if interaction.guild_id else {}
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"{BACKEND_API_URL}/logs/{service}", params=params)
+            resp = await client.get(f"{BACKEND_API_URL}/logs/{service}", params=params, headers=headers)
             
         if resp.status_code == 200:
             data = resp.json()
@@ -302,10 +361,12 @@ async def diagnose_command(interaction: discord.Interaction, service: str):
     await interaction.response.defer(ephemeral=True)
     
     try:
+        headers = {"X-Guild-ID": str(interaction.guild_id)} if interaction.guild_id else {}
         async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(
                 f"{BACKEND_API_URL}/diagnose",
-                json={"service_name": service}
+                json={"service_name": service},
+                headers=headers
             )
             
         if resp.status_code == 200:
@@ -359,10 +420,12 @@ async def explain_error_command(interaction: discord.Interaction, error: str):
     await interaction.response.defer(ephemeral=True)
     
     try:
+        headers = {"X-Guild-ID": str(interaction.guild_id)} if interaction.guild_id else {}
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{BACKEND_API_URL}/explain-error",
-                json={"error_message": error}
+                json={"error_message": error},
+                headers=headers
             )
             
         if resp.status_code == 200:
@@ -399,10 +462,12 @@ async def search_docs_command(interaction: discord.Interaction, query: str):
     await interaction.response.defer(ephemeral=True)
     
     try:
+        headers = {"X-Guild-ID": str(interaction.guild_id)} if interaction.guild_id else {}
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"{BACKEND_API_URL}/search-docs",
-                json={"query": query, "limit": 3}
+                json={"query": query, "limit": 3},
+                headers=headers
             )
             
         if resp.status_code == 200:
@@ -445,10 +510,12 @@ async def ask_command(interaction: discord.Interaction, question: str):
     await interaction.response.defer(ephemeral=True)
     
     try:
+        headers = {"X-Guild-ID": str(interaction.guild_id)} if interaction.guild_id else {}
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{BACKEND_API_URL}/ask",
-                json={"question": question}
+                json={"question": question},
+                headers=headers
             )
             
         if resp.status_code == 200:
@@ -488,8 +555,9 @@ async def history_command(interaction: discord.Interaction, service: Optional[st
         if service:
             params["service_name"] = service
             
+        headers = {"X-Guild-ID": str(interaction.guild_id)} if interaction.guild_id else {}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{BACKEND_API_URL}/history", params=params)
+            resp = await client.get(f"{BACKEND_API_URL}/history", params=params, headers=headers)
             
         if resp.status_code == 200:
             history = resp.json()

@@ -2,7 +2,7 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -11,10 +11,11 @@ from app.models.schemas import (
     DiagnoseRequest, DiagnoseResponse,
     ExplainErrorRequest, ExplainErrorResponse,
     SearchDocsRequest, SearchDocsResponse, SearchResult,
-    AskRequest, AskResponse, HealthResponse
+    AskRequest, AskResponse, HealthResponse,
+    SetupClusterRequest, SetupClusterResponse
 )
 from app.core.database import SQLALCHEMY_AVAILABLE, get_db, engine
-from app.models.db_models import IncidentDiagnosis
+from app.models.db_models import IncidentDiagnosis, ClusterConfiguration
 from app.services.rag_service import RAGService
 from app.agents.sre_workflow import SREWorkflow, get_llm
 
@@ -35,6 +36,16 @@ async def lifespan(app: FastAPI):
             from app.core.database import Base
             Base.metadata.create_all(bind=engine)
             logger.info("Database tables verified.")
+            
+            # Ensure guild_id column is added dynamically to existing tables
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE incident_diagnoses ADD COLUMN IF NOT EXISTS guild_id VARCHAR"))
+                    conn.commit()
+                    logger.info("Dynamic schema check: incident_diagnoses.guild_id column verified.")
+                except Exception as db_alter_err:
+                    logger.warning(f"Failed to run schema alter migration: {str(db_alter_err)}")
         except Exception as e:
             logger.error(f"Failed to create database tables: {str(e)}")
             
@@ -133,12 +144,12 @@ async def health():
     )
 
 @app.post("/diagnose", response_model=DiagnoseResponse)
-async def diagnose(request: DiagnoseRequest, db=Depends(get_db)):
+async def diagnose(request: DiagnoseRequest, db=Depends(get_db), x_guild_id: Optional[str] = Header(None)):
     """
     Executes SRE multi-agent diagnosis pipeline on Kubernetes service logs and metrics.
     """
     try:
-        report = sre_workflow.run_diagnosis(request.service_name)
+        report = sre_workflow.run_diagnosis(request.service_name, guild_id=x_guild_id)
         
         # Save diagnosis result to database audit log if active
         if db is not None:
@@ -146,6 +157,7 @@ async def diagnose(request: DiagnoseRequest, db=Depends(get_db)):
                 import json
                 pods_str = json.dumps(report["pod_status"])
                 db_report = IncidentDiagnosis(
+                    guild_id=x_guild_id,
                     service_name=report["service_name"],
                     pod_status=pods_str,
                     log_analysis=report["log_analysis"],
@@ -179,7 +191,7 @@ async def diagnose(request: DiagnoseRequest, db=Depends(get_db)):
         )
 
 @app.get("/history")
-async def get_history(service_name: Optional[str] = None, limit: int = 10, skip: int = 0, db=Depends(get_db)):
+async def get_history(service_name: Optional[str] = None, limit: int = 10, skip: int = 0, db=Depends(get_db), x_guild_id: Optional[str] = Header(None)):
     """
     Retrieves the SRE diagnostic run history from the database audit log.
     """
@@ -190,6 +202,8 @@ async def get_history(service_name: Optional[str] = None, limit: int = 10, skip:
         )
     try:
         query = db.query(IncidentDiagnosis)
+        if x_guild_id:
+            query = query.filter(IncidentDiagnosis.guild_id == x_guild_id)
         if service_name:
             query = query.filter(IncidentDiagnosis.service_name == service_name)
         diagnoses = query.order_by(IncidentDiagnosis.timestamp.desc()).offset(skip).limit(limit).all()
@@ -208,14 +222,14 @@ async def get_history(service_name: Optional[str] = None, limit: int = 10, skip:
         )
 
 @app.get("/pod-status/{service_name}")
-async def get_pod_status(service_name: str):
+async def get_pod_status(service_name: str, x_guild_id: Optional[str] = Header(None)):
     """
     Lightweight pod status check — no AI diagnosis, no Gemini API calls.
     Used by the bot's background alert monitor to check pod health efficiently.
     """
     try:
         from app.services.k8s_service import K8sService
-        k8s = K8sService()
+        k8s = K8sService(guild_id=x_guild_id)
         return k8s.get_pod_status(service_name)
     except Exception as e:
         logger.error(f"Error fetching pod status for {service_name}: {str(e)}")
@@ -225,13 +239,13 @@ async def get_pod_status(service_name: str):
         )
 
 @app.get("/deployments", response_model=List[str])
-async def list_deployments():
+async def list_deployments(x_guild_id: Optional[str] = Header(None)):
     """
     Lists all active deployments in the Kubernetes namespace.
     """
     try:
         from app.services.k8s_service import K8sService
-        k8s = K8sService()
+        k8s = K8sService(guild_id=x_guild_id)
         return k8s.list_deployments()
     except Exception as e:
         logger.error(f"Error listing deployments in API: {str(e)}")
@@ -241,13 +255,13 @@ async def list_deployments():
         )
 
 @app.get("/logs/{service_name}")
-async def get_logs(service_name: str, tail_lines: int = 100, since_seconds: Optional[int] = None, query: Optional[str] = None):
+async def get_logs(service_name: str, tail_lines: int = 100, since_seconds: Optional[int] = None, query: Optional[str] = None, x_guild_id: Optional[str] = Header(None)):
     """
     Fetches raw logs for a specific service with optional timeframe and keyword filters.
     """
     try:
         from app.services.k8s_service import K8sService
-        k8s = K8sService()
+        k8s = K8sService(guild_id=x_guild_id)
         logs = k8s.get_pod_logs(service_name, tail_lines, since_seconds, query)
         return {"service_name": service_name, "logs": logs}
     except Exception as e:
@@ -427,6 +441,62 @@ async def ask_question(request: AskRequest):
         )
 
     return AskResponse(answer=answer, sources=sources)
+
+@app.post("/setup-cluster", response_model=SetupClusterResponse)
+async def setup_cluster(request: SetupClusterRequest, db=Depends(get_db)):
+    """
+    Saves or updates cluster configuration for a specific Discord server.
+    """
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database persistence is not active or database packages are missing."
+        )
+    
+    try:
+        from app.utils.encryption import encrypt_data
+        import yaml
+        
+        # Validate that kubeconfig is valid YAML
+        try:
+            yaml.safe_load(request.kubeconfig)
+        except Exception as yaml_err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid kubeconfig format. Must be valid YAML: {str(yaml_err)}"
+            )
+            
+        encrypted_config = encrypt_data(request.kubeconfig)
+        
+        # Check if record already exists
+        config_record = db.query(ClusterConfiguration).filter(ClusterConfiguration.guild_id == request.guild_id).first()
+        if config_record:
+            config_record.kubeconfig_encrypted = encrypted_config
+            if request.prometheus_url:
+                config_record.prometheus_url = request.prometheus_url
+            logger.info(f"Updated cluster configuration for guild: {request.guild_id}")
+            message = "Cluster configuration updated successfully."
+        else:
+            new_record = ClusterConfiguration(
+                guild_id=request.guild_id,
+                kubeconfig_encrypted=encrypted_config,
+                prometheus_url=request.prometheus_url
+            )
+            db.add(new_record)
+            logger.info(f"Created new cluster configuration for guild: {request.guild_id}")
+            message = "Cluster configuration created successfully."
+            
+        db.commit()
+        return SetupClusterResponse(status="Success", message=message)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting up cluster for guild {request.guild_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal database error setting up cluster: {str(e)}"
+        )
 
 @app.post("/upload-doc")
 async def upload_document(file: UploadFile = File(...)):

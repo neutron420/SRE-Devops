@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Dict, Any, List, TypedDict
+from typing import Dict, Any, List, TypedDict, Optional
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
@@ -362,16 +362,19 @@ class SREWorkflow:
         self.app = workflow.compile()
         logger.info("LangGraph SRE Workflow successfully compiled.")
 
-    def run_diagnosis(self, service_name: str) -> Dict[str, Any]:
+    def run_diagnosis(self, service_name: str, guild_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Executes the SRE multi-agent workflow for the given service.
         """
-        logger.info(f"Initiating diagnostic run for service: '{service_name}'")
+        logger.info(f"Initiating diagnostic run for service: '{service_name}', guild_id: {guild_id}")
         
-        # 1. Fetch raw data from mock systems
-        pod_status = self.k8s.get_pod_status(service_name)
-        logs = self.k8s.get_pod_logs(service_name)
-        metrics = self.prometheus.get_all_metrics(service_name)
+        # 1. Fetch data dynamically per guild or fallback to default
+        k8s_svc = K8sService(guild_id=guild_id)
+        prom_svc = PrometheusService(guild_id=guild_id)
+        
+        pod_status = k8s_svc.get_pod_status(service_name)
+        logs = k8s_svc.get_pod_logs(service_name)
+        metrics = prom_svc.get_all_metrics(service_name)
         
         # 2. Setup initial state
         initial_state: SREState = {

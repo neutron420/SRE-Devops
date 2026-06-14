@@ -1,7 +1,7 @@
 import os
 import time
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import httpx
 from app.core.config import settings
 
@@ -13,10 +13,26 @@ class PrometheusService:
     against a Prometheus HTTP server.
     """
 
-    def __init__(self):
+    def __init__(self, guild_id: Optional[str] = None):
         self.prometheus_url = os.getenv("PROMETHEUS_URL", "http://localhost:9090").rstrip("/")
         self.mock_mode = settings.MOCK_MODE
-        logger.info(f"Prometheus Service initialized (mock_mode={self.mock_mode}, url={self.prometheus_url})")
+        self.guild_id = guild_id
+        
+        if guild_id and not self.mock_mode:
+            try:
+                from app.core.database import SessionLocal
+                from app.models.db_models import ClusterConfiguration
+                db = SessionLocal()
+                try:
+                    config_record = db.query(ClusterConfiguration).filter(ClusterConfiguration.guild_id == guild_id).first()
+                    if config_record and config_record.prometheus_url:
+                        self.prometheus_url = config_record.prometheus_url.rstrip("/")
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error(f"Failed to load dynamic Prometheus URL for guild {guild_id}: {str(e)}")
+
+        logger.info(f"Prometheus Service initialized (mock_mode={self.mock_mode}, url={self.prometheus_url}, guild_id={guild_id})")
 
     def _query_range(self, query: str, duration_hours: int = 1, step_seconds: int = 60) -> List[Dict[str, Any]]:
         """

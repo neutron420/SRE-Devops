@@ -13,15 +13,38 @@ class K8sService:
     Loads configurations from in-cluster service accounts or local kubeconfig.
     """
 
-    def __init__(self):
+    def __init__(self, guild_id: Optional[str] = None):
         self.namespace = settings.K8S_NAMESPACE
         self.k8s_connected = False
         self.mock_mode = settings.MOCK_MODE
+        self.guild_id = guild_id
         
         if self.mock_mode:
             logger.info("K8sService is running in MOCK mode. Live cluster calls are bypassed.")
             return
             
+        if guild_id:
+            try:
+                from app.core.database import SessionLocal
+                from app.models.db_models import ClusterConfiguration
+                from app.utils.encryption import decrypt_data
+                import yaml
+
+                db = SessionLocal()
+                try:
+                    config_record = db.query(ClusterConfiguration).filter(ClusterConfiguration.guild_id == guild_id).first()
+                    if config_record:
+                        kubeconfig_str = decrypt_data(config_record.kubeconfig_encrypted)
+                        kubeconfig_dict = yaml.safe_load(kubeconfig_str)
+                        config.load_kube_config_from_dict(kubeconfig_dict)
+                        self.k8s_connected = True
+                        logger.info(f"Successfully loaded dynamic kubeconfig for Discord Guild: {guild_id}")
+                        return
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error(f"Failed to load dynamic kubeconfig for guild {guild_id}: {str(e)}. Falling back to default.")
+
         try:
             # Try loading incluster config (when running inside a Kubernetes Pod)
             config.load_incluster_config()

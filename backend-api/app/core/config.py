@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     CHROMADB_PERSIST_DIRECTORY: str = "./vector-db/chroma_data"
     MOCK_MODE: bool = True
     K8S_NAMESPACE: str = "default"
+    ENCRYPTION_KEY: Optional[str] = None
     
     DATABASE_URL: Optional[str] = None
     POSTGRES_USER: str = "postgres"

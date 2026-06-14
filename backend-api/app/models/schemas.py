@@ -59,3 +59,13 @@ class HealthResponse(BaseModel):
     status: str
     chromadb: str
     api_key_configured: bool
+
+class SetupClusterRequest(BaseModel):
+    guild_id: str = Field(..., description="The Discord Server ID")
+    kubeconfig: str = Field(..., description="The raw kubeconfig YAML text")
+    prometheus_url: Optional[str] = Field(None, description="The custom Prometheus HTTP URL")
+
+class SetupClusterResponse(BaseModel):
+    status: str
+    message: str
+
