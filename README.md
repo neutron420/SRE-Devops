@@ -1,36 +1,53 @@
-# AI DevOps SRE Copilot
+# 🤖 AI DevOps SRE Copilot (Multi-Tenant SaaS)
 
-An intelligent, AI-powered Site Reliability Engineering (SRE) assistant that operates through **Discord** (extensible to Slack) to help developers diagnose infrastructure issues, analyze logs, inspect system metrics, search troubleshooting runbooks, and provide automated root cause analysis.
+An intelligent, enterprise-ready, AI-powered Site Reliability Engineering (SRE) assistant designed for **Discord**. It allows multiple organizations/servers (guilds) to securely register, monitor, and troubleshoot their independent Kubernetes clusters and Prometheus metric endpoints. 
 
 Built using **FastAPI**, **Google Gemini 2.5 Flash**, **LangGraph**, **ChromaDB**, and **discord.py**.
 
 ---
 
-## Architecture Overview
+## 🏛️ System & Multi-Tenant SaaS Architecture
 
-This Copilot uses a modular, microservice-style design, conforming to clean architecture and dependency injection principles:
+The SRE Copilot is built with security, high isolation, and multi-tenancy at its core. 
 
-```text
-copilot-devops/
-├── backend-api/             # FastAPI App containing the SRE Agent Workflow & RAG
-│   ├── app/
-│   │   ├── api/             # API routes
-│   │   ├── core/            # Configuration & Settings
-│   │   ├── models/          # Pydantic schemas (Request/Response validation)
-│   │   ├── services/        # Service integrations (Kubernetes mock, Prometheus mock, RAG)
-│   │   └── agents/          # LangGraph SRE Multi-Agent workflow
-│   └── tests/               # pytest test cases
-├── discord-bot/             # discord.py bot implementing modern slash commands
-├── monitoring/              # Prometheus and Grafana configurations
-├── docs/                    # Architectural documents and troubleshooting runbooks
-├── .github/workflows/       # GitHub Actions CI/CD configuration
-├── docker-compose.yml       # Dev orchestration
-└── .env                     # Local credentials and variables
+### Core Components
+1. **Discord Client Bot (`discord-bot/`)**: A stateless discord.py client registering modern application slash commands. It automatically forwards the current server's Discord Guild ID via the HTTP header `X-Guild-ID` on all API requests.
+2. **FastAPI REST API Backend (`backend-api/`)**: Evaluates incoming headers and coordinates multi-agent LangGraph workflows.
+3. **Database (PostgreSQL)**: Stores encrypted Kubernetes configurations and Prometheus endpoints per Guild ID.
+4. **Vector Store (ChromaDB)**: Houses indexed SRE runbooks, runbook snippets, and reference manuals to feed RAG agents.
+
+```mermaid
+graph TD
+    subgraph Discord Client Layer
+        GuildA[Discord Guild A] -- "/diagnose service (Headers: X-Guild-ID A)" --> Bot[Discord Bot Client]
+        GuildB[Discord Guild B] -- "/diagnose service (Headers: X-Guild-ID B)" --> Bot
+    end
+
+    subgraph API & Orchestration Layer
+        Bot -- "POST /diagnose (X-Guild-ID)" --> API[FastAPI Backend API]
+        API --> DB[(PostgreSQL)]
+        API --> Chroma[(ChromaDB RAG)]
+    end
+
+    subgraph Dynamic Service Provisioning
+        DB -- "1. Fetch & Decrypt Kubeconfig" --> Crypto[AES-256 Fernet Cryptography]
+        Crypto -- "2. Load Client Credentials" --> K8sClient[Dynamic Kubernetes Client]
+        DB -- "3. Load Target Endpoint" --> PromClient[Dynamic Prometheus Client]
+    end
+
+    subgraph Cluster Target Layer
+        K8sClient --> ClusterA[Guild A Kubernetes Cluster]
+        PromClient --> PromA[Guild A Prometheus Server]
+    end
+
+    style Bot fill:#5865F2,stroke:#333,stroke-width:2px,color:#fff
+    style API fill:#009688,stroke:#333,stroke-width:2px,color:#fff
+    style DB fill:#336791,stroke:#333,stroke-width:2px,color:#fff
+    style Crypto fill:#E67E22,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 ### Multi-Agent SRE Workflow (LangGraph)
-
-The core diagnosis pipeline is built as a stateful graph using **LangGraph**:
+When a diagnostic operation is invoked, the coordinator spins up a stateful graph directing specialized AI agents:
 
 ```mermaid
 graph TD
@@ -52,112 +69,147 @@ graph TD
     style RecAgent fill:#8c564b,stroke:#333,stroke-width:1px,color:#fff
 ```
 
-1. **Log Analysis Agent**: Parses stdout, detects exceptions/crashes, and extracts warning context.
-2. **Metrics Analysis Agent**: Inspects CPU, Memory limits, HTTP Request latency, and failures.
-3. **Documentation Agent**: Queries ChromaDB for matching troubleshooting runbooks.
-4. **Root Cause Agent**: Synthesizes inputs to deduce the primary issue and calculates a confidence score.
-5. **Recommendation Agent**: Suggests exact shell commands and fixes.
+---
+
+## 🛠️ Technology Stack
+* **Language Runtime**: Python 3.12, Uvicorn, FastAPI
+* **AI & Orchestration**: Google Gemini 2.5 Flash, LangGraph, LangChain
+* **Vector DB**: ChromaDB with offline `SentenceTransformers` embeddings (`all-MiniLM-L6-v2`)
+* **Relational Database**: PostgreSQL (Neon Serverless in cloud prod, Dockerized in local dev)
+* **SaaS Cryptography**: Symmetric AES-256 encryption via PyCa/cryptography
+* **Containerization**: Docker, Docker Compose
+* **Infrastructure**: Terraform, AWS EC2
 
 ---
 
-## Technology Stack
+## ⚙️ Security & Cryptography Model
 
-* **Backend**: Python 3.12, FastAPI, Uvicorn
-* **AI Pipeline**: Google Gemini 2.5 Flash, LangGraph, LangChain
-* **Vector Store**: ChromaDB with `SentenceTransformers` (all-MiniLM-L6-v2) for offline embeddings
-* **Database**: PostgreSQL (Dockerized)
-* **Monitoring**: Prometheus (metrics scraping), Grafana (visualization)
-* **Interface**: Discord Bot (built with `discord.py`)
-* **DevOps**: Docker, Docker Compose, GitHub Actions
+To safeguard Kubernetes credentials and cluster security context:
+* **AES-256 Symmetric Encryption**: Uploaded kubeconfig payloads are encrypted using Fernet (symmetric authenticated cryptography) before database persistence.
+* **Key Derivation**: 
+  - SRE Copilot reads `ENCRYPTION_KEY` from the environment.
+  - If `ENCRYPTION_KEY` is not explicitly set, the system dynamically derives a stable 32-byte URL-safe base64 key by hashing `GEMINI_API_KEY`.
+  - A fallback key is provided as a secondary safety check.
+* **Git Safety**: Raw credentials (`kube/config`) and environments are tracked in `.gitignore`. EKS credentials are removed from git cache to prevent accidental check-ins.
 
 ---
 
-## Getting Started
+## 🚀 Getting Started
 
 ### 1. Prerequisites
-* Python 3.12 (if running locally without Docker)
+* Python 3.12 (if executing scripts/tests locally)
 * Docker & Docker Compose
 * Google Gemini API Key
 * Discord Bot Token (with Applications.Commands gateway intent enabled)
 
-### 2. Configure Credentials
-Copy `.env.example` to `.env` and fill in the values:
+### 2. Configuration Setup
+Copy `.env.example` to `.env` and fill in active keys:
 ```bash
 cp .env.example .env
 ```
-Ensure you set your `DISCORD_TOKEN` and `GEMINI_API_KEY`. (Note: If `GEMINI_API_KEY` is not provided, the backend falls back to high-fidelity SRE rules engines to support offline development and test runs.)
+Ensure `DISCORD_TOKEN` and `GEMINI_API_KEY` are provided.
 
-### 3. Run with Docker Compose (Recommended)
-This starts all components (FastAPI backend, Discord bot, Postgres Database, Prometheus, and Grafana) simultaneously:
-
+### 3. Run with Docker Compose
+To start the backend, Discord bot, vector database, and local monitoring components simultaneously:
 ```bash
 docker-compose up --build -d
 ```
-
-Verify everything is running:
-* **FastAPI Docs**: http://localhost:8000/docs
-* **Prometheus**: http://localhost:9090
-* **Grafana**: http://localhost:3000 (User: `admin`, Pass: `admin`)
-* **Discord Bot**: Logged in and listing commands in your server!
-
----
-
-## Discord Slash Commands Guide
-
-The bot registers and supports the following slash commands:
-
-* **/help** - Returns a structured embed guide of SRE capabilities.
-* **/status** - Checks connectivity to FastAPI Backend, ChromaDB, and Gemini API keys.
-* **/logs `[service]`** - Outputs the last 100 lines of container logs for a service.
-  * *Example*: `/logs payment-service`
-* **/diagnose `[service]`** - Runs the multi-agent incident response pipeline.
-  * *Example*: `/diagnose payment-service`
-  * *Output*: A comprehensive color-coded embed detailing pod status, log errors, metric graphs anomalies, root cause diagnosis, and copy-paste remediation commands.
-* **/explain-error `[error_text]`** - Explains stack traces or error logs with suggested solutions.
-* **/search-docs `[query]`** - Finds matching documentation chunks in the ChromaDB vector database.
-* **/ask `[question]`** - Generates SRE answers utilizing indexed runbook context.
+Verify startup endpoints:
+* **FastAPI Backend Docs**: `http://localhost:8000/docs`
+* **Health Check**: `http://localhost:8000/health`
+* **Prometheus**: `http://localhost:9090`
+* **Grafana Dashboard**: `http://localhost:3000` (User: `admin`, Pass: `admin`)
 
 ---
 
-## FastAPI REST Endpoints
+## 🎮 Discord Slash Commands Guide
 
-If you wish to query the API programmatically:
+The Discord Bot supports the following commands:
 
-* `POST /diagnose` - Triggers the SRE workflow.
-  * Payload: `{"service_name": "payment-service"}`
-* `POST /explain-error` - Analyzes logs.
-  * Payload: `{"error_message": "string"}`
-* `POST /search-docs` - Similarity search in runbooks.
-  * Payload: `{"query": "database timeout", "limit": 3}`
-* `POST /ask` - RAG Question answering.
-  * Payload: `{"question": "How to scale pod memory?"}`
-* `POST /upload-doc` - Ingests new PDF, Markdown, or text documentation.
-  * Payload: Multipart form file upload.
-* `GET /health` - Liveness health checks.
+### Tenant Administration
+* **/setup `[kubeconfig_file]` `[prometheus_url]`** (Admin Only)  
+  Uploads and encrypts a Kubernetes `kubeconfig` configuration file for the server, along with an optional custom Prometheus metrics server url.
+  * *Parameters*:
+    - `kubeconfig_file`: Discord Attachment (Max 5MB).
+    - `prometheus_url` (Optional): Custom Prometheus base endpoint.
+* **/status**  
+  Checks system liveness and config status (Backend connectivity, ChromaDB, Gemini status).
+
+### Diagnostics & Monitoring
+* **/deployments**  
+  Queries and lists all active deployments in the configured cluster namespace.
+* **/logs `[service]` `[query]` `[timeframe]`**  
+  Retrieves logs for the first active pod in a service, filtering by timeframe (e.g. `30m`, `2h`, `1d`) and search terms.
+* **/diagnose `[service]`**  
+  Triggers the LangGraph multi-agent diagnostic pipeline. Runs real-time log parses, metric checks, runbook RAG lookups, and outputs a rich color-coded embed detailing:
+  - Pod state and restarts.
+  - Log warning/exception analysis.
+  - Latency and Error Rate spikes.
+  - Root cause summary and action-oriented CLI remediation steps.
+* **/explain-error `[error_text]`**  
+  Breaks down custom stack traces and system logs using AI, providing potential causes and code-level fixes.
+* **/ask `[question]`**  
+  Answers general SRE questions referencing runbooks loaded into the vector database.
+* **/search-docs `[query]`**  
+  Performs similarity search against internal RAG runbook files stored in ChromaDB.
+* **/history `[service]` `[limit]`**  
+  Fetches past incident diagnostic histories and saved root causes from PostgreSQL logs.
 
 ---
 
-## Running Verification Tests
+## 🧪 Local Testing & Mock Mode
+
+For rapid offline testing and debugging without configuring an active Kubernetes cluster:
+
+### Mock Configuration
+Set `MOCK_MODE=true` in your `.env` file:
+```env
+MOCK_MODE=true
+```
+Under Mock Mode:
+1. **Kubernetes API Calls**: Instead of connecting to a live cluster, `K8sService` returns predefined pod states representing classic scenarios:
+   - `payment-service`: Simulates a database connection timeout crashloop (`CrashLoopBackOff`, exit code restarts).
+   - `analytics-service`: Simulates a Java heap memory leak (`OOMKilled`).
+   - `frontend-service`: Simulates downstream latency/timeout anomalies.
+2. **Prometheus Metrics**: Returns simulated query results mapping to CPU limit spikes, high latency, or error percentage spikes.
+3. **AI Pipeline**: If `GEMINI_API_KEY` is not provided, the API utilizes a rule-based fallback logic to produce accurate SRE answers.
+
+> [!WARNING]
+> **Cloud Backend & Local Cluster Limit**: If you run the FastAPI backend on an AWS EC2 instance, it cannot connect to local Kubernetes clusters (e.g. Docker Desktop, Minikube) due to NAT and localhost network boundaries. To test live cluster integration (`MOCK_MODE=false`), you must supply public/cloud Kubernetes API endpoints (like AWS EKS) or run the FastAPI backend locally on the same network.
+
+---
+
+## 🛡️ Production Deployment Guide
+
+### Automated AWS EC2 Provisioning
+The project includes a PowerShell script to automatically deploy the entire system to AWS using Terraform and Docker Compose:
+```powershell
+.\deploy.ps1
+```
+This script provisions an AWS VPC, Security Group, EC2 Instance (t3.small), installs Docker, uploads the project files, and starts the container stack.
+
+### Destroy Infrastructure
+To clean up and destroy all provisioned AWS cloud resources:
+```powershell
+.\cleanup.ps1
+```
+
+For a detailed walkthrough, manual step-by-step setup, or GitHub Actions CI/CD pipeline configuration, refer to the [Production Deployment Guide](file:///c:/Users/R.K%20Singh/Desktop/copilot-devops/deployment.md).
+
+---
+
+## 🔬 Running Tests
 
 Run automated tests using pytest:
 
-### Local Python Environment:
+### Local Python Environment
 ```bash
 cd backend-api
 pip install -r requirements.txt
 pytest
 ```
 
-### Running inside Docker:
+### Running inside Docker
 ```bash
 docker exec -it copilot-backend pytest
 ```
-
----
-
-## Mock Incident Scenarios (Out-of-the-Box Demos)
-You can test the SRE reasoning immediately with these simulated microservices:
-1. **`payment-service`**: Simulates a database connection timeout leading to a `CrashLoopBackOff` state.
-2. **`analytics-service`**: Simulates a resource memory leak spike leading to container `OOMKilled` (Exit code 137).
-3. **`frontend-service`**: Simulates downstream gateway timeouts (504 errors) waiting on the payment service.
-4. **`auth-service`**: Simulates normal operation with minor rate limit warnings.
