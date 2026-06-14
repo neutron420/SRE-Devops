@@ -22,3 +22,9 @@ terraform/*.pem
 
 # Binaries
 terraform.exe
+
+# Kubernetes Local Credentials
+kube/
+kube/config
+kube/*
+
