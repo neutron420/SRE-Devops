@@ -302,7 +302,7 @@ async def diagnose_command(interaction: discord.Interaction, service: str):
     await interaction.response.defer(ephemeral=True)
     
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(
                 f"{BACKEND_API_URL}/diagnose",
                 json={"service_name": service}
@@ -359,7 +359,7 @@ async def explain_error_command(interaction: discord.Interaction, error: str):
     await interaction.response.defer(ephemeral=True)
     
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{BACKEND_API_URL}/explain-error",
                 json={"error_message": error}
@@ -445,7 +445,7 @@ async def ask_command(interaction: discord.Interaction, question: str):
     await interaction.response.defer(ephemeral=True)
     
     try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{BACKEND_API_URL}/ask",
                 json={"question": question}

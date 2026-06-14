@@ -1,13 +1,19 @@
 variable "aws_region" {
   description = "AWS region to deploy resources"
   type        = string
-  default     = "us-east-1"
+  default     = "ap-south-1"
 }
 
-variable "cluster_name" {
-  description = "Name of the EKS cluster"
+variable "project_name" {
+  description = "Name prefix for all resources"
   type        = string
-  default     = "sre-copilot-cluster"
+  default     = "sre-copilot"
+}
+
+variable "instance_type" {
+  description = "EC2 instance type (t3.small = 2 vCPU, 2GB RAM)"
+  type        = string
+  default     = "t3.small"
 }
 
 variable "vpc_cidr" {

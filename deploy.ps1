@@ -1,97 +1,253 @@
-# DevOps Copilot AWS EKS Automatic Deployment Script
-# Run this from the root directory of the project in PowerShell.
+# ==============================================================
+# SRE DevOps Copilot - EC2 Automated Deployment Script
+# Deploys the full stack to a single EC2 instance via Docker Compose
+# Run from the project root: .\deploy.ps1
+# ==============================================================
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "Starting SRE DevOps Copilot Deployment" -ForegroundColor Cyan
-Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "==============================================" -ForegroundColor Cyan
+Write-Host "  SRE DevOps Copilot - EC2 Deployment" -ForegroundColor Cyan
+Write-Host "  Cost: ~17 USD/month (vs ~73+ for EKS)" -ForegroundColor Cyan
+Write-Host "==============================================" -ForegroundColor Cyan
+Write-Host ""
 
-# ----------------- 0. Configuration & Prompts -----------------
-$dockerHubUser = Read-Host "Enter your Docker Hub Username"
-if ([string]::IsNullOrWhiteSpace($dockerHubUser)) {
-    Write-Error "Docker Hub Username cannot be empty."
+# ----------------- 0. Configuration -----------------
+$awsRegion = Read-Host "Enter your AWS Region (default: ap-south-1)"
+if ([string]::IsNullOrWhiteSpace($awsRegion)) {
+    $awsRegion = "ap-south-1"
 }
 
-$awsRegion = Read-Host "Enter your AWS Region (e.g. us-east-1)"
-if ([string]::IsNullOrWhiteSpace($awsRegion)) {
-    Write-Error "AWS Region cannot be empty."
+$instanceType = Read-Host "Enter EC2 instance type (default: t3.small)"
+if ([string]::IsNullOrWhiteSpace($instanceType)) {
+    $instanceType = "t3.small"
+}
+
+# Determine terraform command (check root folder first, then PATH)
+$terraformCmd = $null
+$localTerraformPath = Join-Path (Get-Location).Path "terraform.exe"
+if (Test-Path $localTerraformPath) {
+    $terraformCmd = $localTerraformPath
+    Write-Host "[INFO] Using local terraform.exe: $terraformCmd" -ForegroundColor Gray
+}
+elseif (Get-Command "terraform" -ErrorAction SilentlyContinue) {
+    $terraformCmd = "terraform"
+    Write-Host "[INFO] Using terraform from PATH" -ForegroundColor Gray
+}
+else {
+    Write-Error "Terraform is not installed, not in PATH, and terraform.exe not found in root folder."
 }
 
 # ----------------- 1. Prerequisite Checks -----------------
-Write-Host "`n[INFO] Checking prerequisites..." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "[STEP 1/5] Checking prerequisites..." -ForegroundColor Yellow
 
-$tools = @("aws", "terraform", "kubectl")
-foreach ($tool in $tools) {
-    if ((Get-Command $tool -ErrorAction SilentlyContinue) -eq $null) {
-        Write-Error "Prerequisite tool '$tool' is not installed or not in your PATH. Please install it and retry."
+$requiredTools = @("aws", "ssh", "scp")
+foreach ($tool in $requiredTools) {
+    if ($null -eq (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        Write-Error "Required tool '$tool' is not installed or not in PATH. Please install it and retry."
     }
 }
-Write-Host "[SUCCESS] All prerequisite tools (aws, terraform, kubectl) are installed." -ForegroundColor Green
 
-# ----------------- 2. AWS Infrastructure (Stage 1) -----------------
-Write-Host "`n[STAGE 1] Creating EKS Cluster..." -ForegroundColor Yellow
+# Check .env file exists
+if (-not (Test-Path ".env")) {
+    Write-Error "Missing .env file! Copy .env.example to .env and fill in your API keys first."
+}
+
+Write-Host "[OK] All prerequisites verified." -ForegroundColor Green
+
+# ----------------- 2. Provision AWS Infrastructure -----------------
+Write-Host ""
+Write-Host "[STEP 2/5] Provisioning EC2 infrastructure with Terraform..." -ForegroundColor Yellow
 Push-Location terraform
 
 try {
-    Write-Host "Initializing Terraform..." -ForegroundColor Gray
-    terraform init
-    Write-Host "Applying Terraform configuration..." -ForegroundColor Gray
-    # Automatically apply with the chosen region variable
-    terraform apply -var="aws_region=$awsRegion" -auto-approve
+    Write-Host "  Initializing Terraform..." -ForegroundColor Gray
+    & $terraformCmd init -upgrade
+    if ($LASTEXITCODE -ne 0) { throw "Terraform init failed" }
+
+    Write-Host "  Planning infrastructure changes..." -ForegroundColor Gray
+    & $terraformCmd plan -var="aws_region=$awsRegion" -var="instance_type=$instanceType" -out=tfplan
+    if ($LASTEXITCODE -ne 0) { throw "Terraform plan failed" }
+
+    Write-Host "  Applying infrastructure..." -ForegroundColor Gray
+    & $terraformCmd apply -auto-approve tfplan
+    if ($LASTEXITCODE -ne 0) { throw "Terraform apply failed" }
+
+    # Capture outputs
+    $ec2PublicIp = & $terraformCmd output -raw ec2_public_ip
+    $sshKeyFile = & $terraformCmd output -raw ssh_key_path
 }
 finally {
     Pop-Location
 }
-Write-Host "[SUCCESS] Stage 1 Complete: AWS Infrastructure built successfully." -ForegroundColor Green
 
-# ----------------- 3. Kubernetes Deployment (Stage 2) -----------------
-Write-Host "`n[STAGE 2] Deploying applications to EKS Cluster..." -ForegroundColor Yellow
+Write-Host "[OK] EC2 instance created at $ec2PublicIp" -ForegroundColor Green
 
-# Connect kubeconfig
-Write-Host "Connecting kubectl to EKS..." -ForegroundColor Gray
-aws eks update-kubeconfig --region $awsRegion --name sre-copilot-cluster
+# Resolve SSH key path to absolute
+$sshKeyFullPath = (Resolve-Path "terraform\sre-copilot-key.pem").Path
 
-# Load variables from .env file
-Write-Host "Reading secrets from .env..." -ForegroundColor Gray
-if (Test-Path ".env") {
-    $envContent = Get-Content ".env"
-    $geminiKey = ""
-    $discordToken = ""
-    $databaseUrl = ""
-
-    foreach ($line in $envContent) {
-        if ($line -match "^GEMINI_API_KEY=(.+)$") { $geminiKey = $Matches[1].Trim() }
-        if ($line -match "^DISCORD_TOKEN=(.+)$") { $discordToken = $Matches[1].Trim() }
-        if ($line -match "^DATABASE_URL=(.+)$") { $databaseUrl = $Matches[1].Trim() }
-    }
-} else {
-    Write-Error "Local .env file not found in root directory!"
+# Secure the SSH key permissions for Windows OpenSSH client compatibility
+if ($env:OS -like "*Windows*") {
+    Write-Host "  Securing SSH key file permissions..." -ForegroundColor Gray
+    $user = "$env:USERDOMAIN\$env:USERNAME"
+    & icacls.exe $sshKeyFullPath /inheritance:r | Out-Null
+    & icacls.exe $sshKeyFullPath /grant:r "${user}:R" | Out-Null
 }
 
-# Create Kubernetes Secret (Idempotent using dry-run)
-Write-Host "Creating Kubernetes secrets..." -ForegroundColor Gray
-kubectl create secret generic copilot-secrets `
-  --from-literal=GEMINI_API_KEY="$geminiKey" `
-  --from-literal=DISCORD_TOKEN="$discordToken" `
-  --from-literal=DATABASE_URL="$databaseUrl" `
-  --dry-run=client -o yaml | kubectl apply -f -
+# ----------------- 3. Wait for EC2 to be ready -----------------
+Write-Host ""
+Write-Host "[STEP 3/5] Waiting for EC2 instance to be ready..." -ForegroundColor Yellow
+Write-Host "  (Docker is being installed via user-data, this takes 2-3 minutes)" -ForegroundColor Gray
 
-# Apply RBAC Config
-Write-Host "Applying cluster RBAC configuration..." -ForegroundColor Gray
-kubectl apply -f kubernetes/sre-rbac.yaml
+$maxRetries = 30
+$retryCount = 0
+$ready = $false
 
-# Modify deployment manifest in-memory to inject Docker Hub Registry prefix and deploy
-Write-Host "Deploying SRE backend and Discord bot..." -ForegroundColor Gray
-$deploymentManifest = Get-Content "kubernetes/sre-deployments.yaml" -Raw
-$deploymentManifest = $deploymentManifest -replace "image: devops-copilot-backend:latest", "image: ${dockerHubUser}/devops-copilot-backend:latest"
-$deploymentManifest = $deploymentManifest -replace "image: devops-copilot-bot:latest", "image: ${dockerHubUser}/devops-copilot-bot:latest"
+while (($ready -eq $false) -and ($retryCount -lt $maxRetries)) {
+    $retryCount = $retryCount + 1
+    Write-Host "  Attempt $retryCount of $maxRetries - checking SSH connectivity..." -ForegroundColor Gray
 
-# Pipe modified manifest directly into kubectl
-$deploymentManifest | kubectl apply -f -
+    $sshResult = $null
+    $prevErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $sshResult = ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes -i $sshKeyFullPath "ec2-user@$ec2PublicIp" "ls /home/ec2-user/.setup-complete" 2>&1
+    }
+    catch {
+        $sshResult = $null
+    }
+    $ErrorActionPreference = $prevErrorAction
 
-Write-Host "[SUCCESS] Stage 2 Complete: Applications deployed successfully." -ForegroundColor Green
+    if (($null -ne $sshResult) -and ($sshResult -notmatch "No such file") -and ($sshResult -notmatch "Connection refused") -and ($sshResult -notmatch "Permission denied") -and ($LASTEXITCODE -eq 0)) {
+        $ready = $true
+        Write-Host "[OK] EC2 instance is ready! Docker installed." -ForegroundColor Green
+    }
+    else {
+        Write-Host "  Not ready yet... waiting 15s" -ForegroundColor Gray
+        Start-Sleep -Seconds 15
+    }
+}
 
-Write-Host "`n=============================================" -ForegroundColor Green
-Write-Host "Deployment completed successfully." -ForegroundColor Green
-Write-Host "=============================================" -ForegroundColor Green
+if ($ready -eq $false) {
+    Write-Error "EC2 instance did not become ready within 7 minutes. Try SSH manually: ssh -i $sshKeyFullPath ec2-user@$ec2PublicIp"
+}
+
+# ----------------- 4. Deploy Application Code -----------------
+Write-Host ""
+Write-Host "[STEP 4/5] Deploying application to EC2..." -ForegroundColor Yellow
+
+$remotePath = "/home/ec2-user/copilot-devops"
+
+# Build list of files to include (skip venv, __pycache__, etc.)
+$includeFiles = @(
+    "docker-compose.yml",
+    ".env",
+    "backend-api/Dockerfile",
+    "backend-api/.dockerignore",
+    "backend-api/requirements.txt",
+    "backend-api/app",
+    "discord-bot/Dockerfile",
+    "discord-bot/.dockerignore",
+    "discord-bot/requirements.txt",
+    "discord-bot/bot.py",
+    "monitoring",
+    "docs"
+)
+
+# Create a clean staging directory for upload
+$stagingDir = Join-Path (Get-Location).Path "deploy-staging"
+if (Test-Path $stagingDir) {
+    Remove-Item $stagingDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+
+Write-Host "  Preparing deployment files..." -ForegroundColor Gray
+foreach ($item in $includeFiles) {
+    if (Test-Path $item) {
+        $destPath = Join-Path $stagingDir $item
+        $destDir = Split-Path $destPath -Parent
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+        if (Test-Path $item -PathType Container) {
+            Copy-Item $item -Destination $destPath -Recurse -Force
+        }
+        else {
+            Copy-Item $item -Destination $destPath -Force
+        }
+    }
+}
+# Clean up any __pycache__ and .pyc files from staging to avoid permission errors on upload
+Get-ChildItem -Path $stagingDir -Filter "__pycache__" -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $stagingDir -Filter "*.pyc" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+
+Write-Host "  Uploading project files to EC2..." -ForegroundColor Gray
+$stagingItems = Get-ChildItem $stagingDir
+foreach ($item in $stagingItems) {
+    Write-Host "    Copying $($item.Name)..." -ForegroundColor Gray
+    & scp -o StrictHostKeyChecking=no -i $sshKeyFullPath -r $item.FullName "ec2-user@${ec2PublicIp}:${remotePath}/"
+}
+
+# Clean up staging
+Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+
+Write-Host "[OK] Files uploaded successfully." -ForegroundColor Green
+
+# ----------------- 5. Start Docker Compose on EC2 -----------------
+Write-Host ""
+Write-Host "[STEP 5/5] Starting containers with Docker Compose..." -ForegroundColor Yellow
+
+# Create a startup script for the remote server
+$startupScriptContent = @(
+    '#!/bin/bash',
+    'set -e',
+    'cd /home/ec2-user/copilot-devops',
+    'docker compose down 2>/dev/null || true',
+    'echo ">>> Building and starting all containers..."',
+    'docker compose up --build -d',
+    'echo ">>> Waiting 15s for containers to initialize..."',
+    'sleep 15',
+    'echo ""',
+    'echo ">>> Container Status:"',
+    'docker compose ps',
+    'echo ""',
+    'echo ">>> Checking API health..."',
+    'curl -sf http://localhost:8000/health || echo "API still starting up..."'
+)
+$startupScriptBody = $startupScriptContent -join "`n"
+
+# Write the startup script locally
+$localScriptPath = Join-Path (Get-Location).Path "deploy-staging"
+New-Item -ItemType Directory -Path $localScriptPath -Force | Out-Null
+$localScriptFile = Join-Path $localScriptPath "startup.sh"
+[System.IO.File]::WriteAllText($localScriptFile, $startupScriptBody)
+
+# Upload and execute
+& scp -o StrictHostKeyChecking=no -i $sshKeyFullPath $localScriptFile "ec2-user@${ec2PublicIp}:/home/ec2-user/startup.sh"
+& ssh -o StrictHostKeyChecking=no -i $sshKeyFullPath "ec2-user@$ec2PublicIp" "chmod +x /home/ec2-user/startup.sh; /home/ec2-user/startup.sh"
+
+# Clean up local staging
+Remove-Item $localScriptPath -Recurse -Force -ErrorAction SilentlyContinue
+
+# ----------------- Done! -----------------
+Write-Host ""
+Write-Host "==============================================" -ForegroundColor Green
+Write-Host "  DEPLOYMENT SUCCESSFUL!" -ForegroundColor Green
+Write-Host "==============================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Access your services:" -ForegroundColor White
+Write-Host "  API Docs:    http://${ec2PublicIp}:8000/docs" -ForegroundColor Cyan
+Write-Host "  Health:      http://${ec2PublicIp}:8000/health" -ForegroundColor Cyan
+Write-Host "  Grafana:     http://${ec2PublicIp}:3000 (admin/admin)" -ForegroundColor Cyan
+Write-Host "  Prometheus:  http://${ec2PublicIp}:9090" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  SSH Access:" -ForegroundColor White
+Write-Host "  ssh -i $sshKeyFullPath ec2-user@$ec2PublicIp" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Discord Bot: Running automatically using DISCORD_TOKEN from .env" -ForegroundColor White
+Write-Host ""
+Write-Host "  To update code later: .\deploy.ps1" -ForegroundColor Gray
+Write-Host "  To destroy everything: .\cleanup.ps1" -ForegroundColor Gray
+Write-Host ""

@@ -56,7 +56,7 @@ jobs:
       with:
         context: ./backend-api
         file: ./backend-api/Dockerfile
-        push: false  # Build test only; change to true for real registry deployments
+        push: false
         tags: devops-copilot-backend:latest
 
     - name: Build Discord Bot Docker Image
@@ -66,3 +66,42 @@ jobs:
         file: ./discord-bot/Dockerfile
         push: false
         tags: devops-copilot-bot:latest
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy to EC2 via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ec2-user
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          cd /home/ec2-user/copilot-devops
+
+          # Pull latest code (if using git) or files are already uploaded
+          echo ">>> Pulling latest changes..."
+          
+          # Rebuild and restart containers with zero downtime
+          echo ">>> Rebuilding containers..."
+          docker compose build --no-cache
+          
+          echo ">>> Restarting services..."
+          docker compose up -d --force-recreate
+          
+          # Wait for health check
+          echo ">>> Waiting for API to be healthy..."
+          sleep 15
+          
+          # Verify deployment
+          echo ">>> Health Check:"
+          curl -sf http://localhost:8000/health && echo " - API is healthy!" || echo " - API health check failed!"
+          
+          echo ">>> Container Status:"
+          docker compose ps

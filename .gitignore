@@ -10,3 +10,15 @@ vector-db/chroma_data/
 **/*.pyc
 **/.pytest_cache/
 **/vector-db/chroma_data/
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfplan
+terraform/tfplan
+terraform/*.pem
+.terraform.lock.hcl
+
+# Binaries
+terraform.exe

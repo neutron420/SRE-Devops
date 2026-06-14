@@ -1,83 +1,150 @@
 # 🚀 Production Deployment Guide: SRE DevOps Copilot
 
-This guide outlines **the best way to deploy** the SRE DevOps Copilot in a production enterprise environment.
+This guide covers deploying the SRE DevOps Copilot to **AWS EC2** using Docker Compose — a cost-effective approach (~$17/month).
 
 ---
 
-## 🏛️ Recommended Production Topology
+## 🏛️ Architecture
 
-The absolute best way to deploy this application is **directly inside your production Kubernetes cluster** alongside the services you want to monitor.
+All services run on a **single EC2 t3.small instance** via Docker Compose:
 
-### Why this is the best way:
-1. **Security & RBAC**: The FastAPI backend pod can use a native Kubernetes ServiceAccount (`sre-copilot-sa`) to query logs and events securely inside the cluster without exposing credentials outside the network.
-2. **Network Performance**: The Prometheus service is queried internally via fast cluster DNS (e.g., `http://prometheus-service.monitoring.svc.cluster.local:9090`), bypassing public load balancers.
-3. **High Availability & Volume Mounts**: Kubernetes automatically manages container lifecycle restarts, scaling, and mounts persistent volumes (via PersistentVolumeClaims) for ChromaDB RAG documents.
+```text
+EC2 Instance (t3.small — 2 vCPU, 2GB RAM)
+├── Backend API (FastAPI)     → Port 8000
+├── Discord Bot               → Internal only
+├── PostgreSQL                → Port 5432
+├── Prometheus                → Port 9090
+└── Grafana                   → Port 3000
+```
+
+### Cost Breakdown
+
+| Resource | Monthly Cost |
+|----------|-------------|
+| EC2 t3.small | ~$15 |
+| EBS 20GB gp3 | ~$1.60 |
+| Elastic IP | Free (attached) |
+| **Total** | **~$17/month** |
 
 ---
 
-## 🛠️ Step-by-Step Deployment Walkthrough
+## 🛠️ Prerequisites
 
-### Step 1: Build & Push Docker Images
-First, build the Docker images for the backend API and the Discord bot, then push them to a container registry of your choice (Docker Hub, AWS ECR, GCP Artifact Registry, GitHub Container Registry, etc.).
+1. **AWS CLI** configured with credentials (`aws configure`)
+2. **Terraform** (or `terraform.exe` in the project root)
+3. **SSH** client (built into Windows 10+, macOS, Linux)
+4. **`.env` file** with your API keys (copy from `.env.example`)
 
+---
+
+## ⚡ One-Command Deploy
+
+```powershell
+.\deploy.ps1
+```
+
+This script automates everything:
+1. ✅ Checks prerequisites
+2. ✅ Provisions EC2 with Terraform (VPC, Security Group, EC2, Elastic IP)
+3. ✅ Waits for Docker to install on EC2
+4. ✅ Uploads project files via SCP
+5. ✅ Starts all containers with Docker Compose
+
+### What you'll be asked:
+- **AWS Region** (default: `ap-south-1` Mumbai)
+- **Instance Type** (default: `t3.small`)
+
+---
+
+## 🔐 After Deployment
+
+### Access Your Services
+- **API Docs**: `http://<EC2_IP>:8000/docs`
+- **Health Check**: `http://<EC2_IP>:8000/health`
+- **Grafana**: `http://<EC2_IP>:3000` (admin/admin)
+- **Prometheus**: `http://<EC2_IP>:9090`
+
+### SSH Into Server
 ```bash
-# Define your registry prefix
-REGISTRY="your-docker-registry-username"
+ssh -i terraform/sre-copilot-key.pem ec2-user@<EC2_IP>
+```
 
-# 1. Build and push the Backend API
-docker build -t $REGISTRY/devops-copilot-backend:latest ./backend-api
-docker push $REGISTRY/devops-copilot-backend:latest
-
-# 2. Build and push the Discord Bot
-docker build -t $REGISTRY/devops-copilot-bot:latest ./discord-bot
-docker push $REGISTRY/devops-copilot-bot:latest
+### View Container Logs
+```bash
+ssh -i terraform/sre-copilot-key.pem ec2-user@<EC2_IP> "cd copilot-devops && docker compose logs -f backend-api"
 ```
 
 ---
 
-### Step 2: Configure secrets in Kubernetes
-Create a Kubernetes Secret named `copilot-secrets` containing your live environment details. Replace the placeholder values with your real tokens:
+## 🔄 CI/CD with GitHub Actions
 
+The CI/CD pipeline (`.github/workflows/ci-cd.yml`) automatically deploys on push to `main`.
+
+### Setup Required GitHub Secrets:
+1. Go to your GitHub repo → Settings → Secrets and Variables → Actions
+2. Add these secrets:
+
+| Secret | Value |
+|--------|-------|
+| `EC2_HOST` | Your EC2 public IP (from Terraform output) |
+| `EC2_SSH_KEY` | Contents of `terraform/sre-copilot-key.pem` |
+
+### Pipeline Stages:
+1. **Test** → Lint + pytest
+2. **Docker Build** → Verify images build
+3. **Deploy** → SSH into EC2, rebuild, restart containers (main branch only)
+
+---
+
+## 🧹 Cleanup / Destroy
+
+```powershell
+.\cleanup.ps1
+```
+
+This destroys all AWS resources (EC2, VPC, EIP) and removes local SSH keys.
+
+---
+
+## 📋 Manual Deployment Steps
+
+If you prefer to deploy manually instead of using `deploy.ps1`:
+
+### Step 1: Provision Infrastructure
+```powershell
+cd terraform
+.\terraform.exe init
+.\terraform.exe apply -var="aws_region=ap-south-1"
+```
+
+### Step 2: Upload Code to EC2
 ```bash
-kubectl create secret generic copilot-secrets \
-  --from-literal=GEMINI_API_KEY="your_actual_gemini_api_key" \
-  --from-literal=DISCORD_TOKEN="your_actual_discord_bot_token" \
-  --from-literal=DATABASE_URL="postgresql://neondb_owner:password@ep-host-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require" \
-  --namespace=default
+scp -i terraform/sre-copilot-key.pem -r docker-compose.yml .env backend-api discord-bot monitoring docs ec2-user@<EC2_IP>:/home/ec2-user/copilot-devops/
+```
+
+### Step 3: Start Containers
+```bash
+ssh -i terraform/sre-copilot-key.pem ec2-user@<EC2_IP> "cd copilot-devops && docker compose up --build -d"
 ```
 
 ---
 
-### Step 3: Apply RBAC authorization Roles
-The backend requires list/get/watch permissions for pods, logs, events, and deployments. Apply the RBAC resource file:
+## 🔧 Troubleshooting
 
+### Containers not starting?
 ```bash
-kubectl apply -f kubernetes/sre-rbac.yaml
+ssh -i terraform/sre-copilot-key.pem ec2-user@<EC2_IP> "cd copilot-devops && docker compose logs"
 ```
 
----
+### Docker not installed yet?
+The user data script takes ~2-3 minutes. Check progress:
+```bash
+ssh -i terraform/sre-copilot-key.pem ec2-user@<EC2_IP> "cat /var/log/user-data.log"
+```
 
-### Step 4: Configure & deploy the services
-1. Open `kubernetes/sre-deployments.yaml` and update the image tags to point to your registry:
-   * Line 46: Change `image: devops-copilot-backend:latest` to `image: your-docker-registry-username/devops-copilot-backend:latest`.
-   * Line 88: Change `image: devops-copilot-bot:latest` to `image: your-docker-registry-username/devops-copilot-bot:latest`.
-2. Check the Prometheus server connection address:
-   * Line 57: Update the `PROMETHEUS_URL` value to your cluster's Prometheus Service endpoint (e.g. `http://prometheus-service.monitoring.svc.cluster.local:9090`).
-3. Apply the manifests:
-   ```bash
-   kubectl apply -f kubernetes/sre-deployments.yaml
-   ```
-
----
-
-## 🔄 Lifecycle & Maintenance Tasks
-
-### Adding Runbooks dynamically
-To add runbooks to your ChromaDB RAG assistant:
-1. Save your markdown troubleshooting guides (`.md` or `.txt`) inside the `docs/runbooks` directory.
-2. The FastAPI backend automatically loads and indexes any new documents found in this directory on startup.
-3. You can also upload files dynamically using the `/upload-doc` API route or Discord attachment commands in future integrations.
-
-### Scaling & High Availability notes
-* **Discord Bot**: Keep `replicas: 1` for the `sre-discord-bot` deployment to prevent duplicate webhook callbacks and redundant slash command registrations.
-* **FastAPI Backend**: Can be scaled up to multiple replicas behind a Service load balancer. Since database logging is saved to Neon DB, the api endpoints are stateless.
+### Out of memory?
+Upgrade to t3.medium (~$30/month):
+```powershell
+cd terraform
+.\terraform.exe apply -var="instance_type=t3.medium" -auto-approve
+```
