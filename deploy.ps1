@@ -153,7 +153,8 @@ $includeFiles = @(
     "discord-bot/requirements.txt",
     "discord-bot/bot.py",
     "monitoring",
-    "docs"
+    "docs",
+    "kube"
 )
 
 # Create a clean staging directory for upload
