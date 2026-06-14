@@ -1,17 +1,47 @@
-# 🤖 AI DevOps SRE Copilot (Multi-Tenant SaaS)
+# AI DevOps SRE Copilot (Multi-Tenant SaaS)
 
-An intelligent, enterprise-ready, AI-powered Site Reliability Engineering (SRE) assistant designed for **Discord**. It allows multiple organizations/servers (guilds) to securely register, monitor, and troubleshoot their independent Kubernetes clusters and Prometheus metric endpoints. 
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Discord.py](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-F46800?style=for-the-badge&logo=grafana&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?style=for-the-badge&logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![Terraform](https://img.shields.io/badge/Terraform-7B42BC?style=for-the-badge&logo=terraform&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-232F3E?style=for-the-badge&logo=amazon-aws&logoColor=white)
+![HCL](https://img.shields.io/badge/HCL-7B42BC?style=for-the-badge&logo=hashicorp&logoColor=white)
 
-Built using **FastAPI**, **Google Gemini 2.5 Flash**, **LangGraph**, **ChromaDB**, and **discord.py**.
+An intelligent, enterprise-ready, AI-powered Site Reliability Engineering (SRE) assistant designed for Discord. It allows multiple organizations/servers (guilds) to securely register, monitor, and troubleshoot their independent Kubernetes clusters and Prometheus metric endpoints.
 
 ---
 
-## 🏛️ System & Multi-Tenant SaaS Architecture
+## Core Features and Functionalities
 
-The SRE Copilot is built with security, high isolation, and multi-tenancy at its core. 
+The AI DevOps SRE Copilot acts as a virtual SRE agent on your Discord server, providing the following core functionalities:
+
+* **Dynamic Multi-Tenant SaaS Cluster Registration**: Allows different Discord servers to register their own Kubernetes clusters and Prometheus metric endpoints. Each guild's settings are completely isolated.
+* **Secure Kubeconfig Cryptography**: Kubeconfigs uploaded via Discord are encrypted using AES-256 (Fernet symmetric authenticated cryptography) before being saved in a database, ensuring credentials are secure at rest. 
+* **Dynamic Service Client Routing**: Initializes the Kubernetes and Prometheus client context dynamically for each API request based on the caller's Guild ID. Decryption is executed in-memory only when communicating with the cluster.
+* **Agentic Incident Diagnostics (LangGraph)**: Runs a stateful, multi-agent AI workflow powered by Gemini 2.5 Flash to automatically diagnose container incidents. The agents perform the following:
+  - Pod status check (identifies CrashLoopBackOff, ImagePullBackOff, OOMKilled states).
+  - Log analysis (analyzes container stdout for warnings, crashes, and stack traces).
+  - Metrics anomaly detection (gathers Prometheus data for CPU usage, memory limits, latencies, and HTTP error rates).
+  - Runbook Retrieval-Augmented Generation (RAG) (queries ChromaDB for matching incident resolution manuals).
+  - Synthesis and Recommendation (calculates a confidence score, details the root cause, and generates exact copy-paste remediation commands).
+* **Proactive SRE Health Monitoring Alerts**: A background loop monitors pod health across all registered clusters. If a pod transitions to an unhealthy state (e.g., OOMKilled, CrashLoopBackOff), the bot automatically alerts the server's designated alerts channel, clearing the alert once the pod returns to a healthy running state.
+* **Interactive Log Tail and Search**: Fetches recent pod logs for any registered Kubernetes service, with support for custom lookback timeframes (e.g., 30m, 2h, 1d) and exact text search filters.
+* **Error Diagnostic Explanations**: Evaluates arbitrary stack traces or error logs submitted by users, suggesting potential root causes and fixing instructions.
+* **System Audit Logging**: Persists all diagnostic operations in a database history log, allowing teams to query past incident investigations, root causes, and recommendations.
+
+---
+
+## System and Multi-Tenant SaaS Architecture
+
+The SRE Copilot is built with security, high isolation, and multi-tenancy at its core.
 
 ### Core Components
-1. **Discord Client Bot (`discord-bot/`)**: A stateless discord.py client registering modern application slash commands. It automatically forwards the current server's Discord Guild ID via the HTTP header `X-Guild-ID` on all API requests.
+1. **Discord Client Bot (`discord-bot/`)**: A stateless client registering application slash commands. It automatically forwards the current server's Discord Guild ID via the HTTP header `X-Guild-ID` on all API requests.
 2. **FastAPI REST API Backend (`backend-api/`)**: Evaluates incoming headers and coordinates multi-agent LangGraph workflows.
 3. **Database (PostgreSQL)**: Stores encrypted Kubernetes configurations and Prometheus endpoints per Guild ID.
 4. **Vector Store (ChromaDB)**: Houses indexed SRE runbooks, runbook snippets, and reference manuals to feed RAG agents.
@@ -71,18 +101,7 @@ graph TD
 
 ---
 
-## 🛠️ Technology Stack
-* **Language Runtime**: Python 3.12, Uvicorn, FastAPI
-* **AI & Orchestration**: Google Gemini 2.5 Flash, LangGraph, LangChain
-* **Vector DB**: ChromaDB with offline `SentenceTransformers` embeddings (`all-MiniLM-L6-v2`)
-* **Relational Database**: PostgreSQL (Neon Serverless in cloud prod, Dockerized in local dev)
-* **SaaS Cryptography**: Symmetric AES-256 encryption via PyCa/cryptography
-* **Containerization**: Docker, Docker Compose
-* **Infrastructure**: Terraform, AWS EC2
-
----
-
-## ⚙️ Security & Cryptography Model
+## Security and Cryptography Model
 
 To safeguard Kubernetes credentials and cluster security context:
 * **AES-256 Symmetric Encryption**: Uploaded kubeconfig payloads are encrypted using Fernet (symmetric authenticated cryptography) before database persistence.
@@ -94,7 +113,7 @@ To safeguard Kubernetes credentials and cluster security context:
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Prerequisites
 * Python 3.12 (if executing scripts/tests locally)
@@ -115,14 +134,14 @@ To start the backend, Discord bot, vector database, and local monitoring compone
 docker-compose up --build -d
 ```
 Verify startup endpoints:
-* **FastAPI Backend Docs**: `http://localhost:8000/docs`
-* **Health Check**: `http://localhost:8000/health`
-* **Prometheus**: `http://localhost:9090`
-* **Grafana Dashboard**: `http://localhost:3000` (User: `admin`, Pass: `admin`)
+* **FastAPI Backend Docs**: http://localhost:8000/docs
+* **Health Check**: http://localhost:8000/health
+* **Prometheus**: http://localhost:9090
+* **Grafana Dashboard**: http://localhost:3000 (User: admin, Pass: admin)
 
 ---
 
-## 🎮 Discord Slash Commands Guide
+## Discord Slash Commands Guide
 
 The Discord Bot supports the following commands:
 
@@ -157,7 +176,7 @@ The Discord Bot supports the following commands:
 
 ---
 
-## 🧪 Local Testing & Mock Mode
+## Local Testing and Mock Mode
 
 For rapid offline testing and debugging without configuring an active Kubernetes cluster:
 
@@ -175,11 +194,11 @@ Under Mock Mode:
 3. **AI Pipeline**: If `GEMINI_API_KEY` is not provided, the API utilizes a rule-based fallback logic to produce accurate SRE answers.
 
 > [!WARNING]
-> **Cloud Backend & Local Cluster Limit**: If you run the FastAPI backend on an AWS EC2 instance, it cannot connect to local Kubernetes clusters (e.g. Docker Desktop, Minikube) due to NAT and localhost network boundaries. To test live cluster integration (`MOCK_MODE=false`), you must supply public/cloud Kubernetes API endpoints (like AWS EKS) or run the FastAPI backend locally on the same network.
+> **Cloud Backend and Local Cluster Limit**: If you run the FastAPI backend on an AWS EC2 instance, it cannot connect to local Kubernetes clusters (e.g. Docker Desktop, Minikube) due to NAT and localhost network boundaries. To test live cluster integration (`MOCK_MODE=false`), you must supply public/cloud Kubernetes API endpoints (like AWS EKS) or run the FastAPI backend locally on the same network.
 
 ---
 
-## 🛡️ Production Deployment Guide
+## Production Deployment Guide
 
 ### Automated AWS EC2 Provisioning
 The project includes a PowerShell script to automatically deploy the entire system to AWS using Terraform and Docker Compose:
@@ -198,7 +217,7 @@ For a detailed walkthrough, manual step-by-step setup, or GitHub Actions CI/CD p
 
 ---
 
-## 🔬 Running Tests
+## Running Tests
 
 Run automated tests using pytest:
 
