@@ -8,9 +8,9 @@ Write-Host "Starting SRE DevOps Copilot Deployment" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 
 # ----------------- 0. Configuration & Prompts -----------------
-$awsAccountId = Read-Host "Enter your AWS Account ID (12 digits)"
-if ($awsAccountId -match "^\d{12}$" -eq $false) {
-    Write-Error "Invalid AWS Account ID. Must be 12 digits."
+$dockerHubUser = Read-Host "Enter your Docker Hub Username"
+if ([string]::IsNullOrWhiteSpace($dockerHubUser)) {
+    Write-Error "Docker Hub Username cannot be empty."
 }
 
 $awsRegion = Read-Host "Enter your AWS Region (e.g. us-east-1)"
@@ -21,16 +21,16 @@ if ([string]::IsNullOrWhiteSpace($awsRegion)) {
 # ----------------- 1. Prerequisite Checks -----------------
 Write-Host "`n[INFO] Checking prerequisites..." -ForegroundColor Yellow
 
-$tools = @("aws", "docker", "terraform", "kubectl")
+$tools = @("aws", "terraform", "kubectl")
 foreach ($tool in $tools) {
     if ((Get-Command $tool -ErrorAction SilentlyContinue) -eq $null) {
         Write-Error "Prerequisite tool '$tool' is not installed or not in your PATH. Please install it and retry."
     }
 }
-Write-Host "[SUCCESS] All prerequisite tools (aws, docker, terraform, kubectl) are installed." -ForegroundColor Green
+Write-Host "[SUCCESS] All prerequisite tools (aws, terraform, kubectl) are installed." -ForegroundColor Green
 
 # ----------------- 2. AWS Infrastructure (Stage 1) -----------------
-Write-Host "`n[STAGE 1] Creating EKS Cluster and ECR Registries..." -ForegroundColor Yellow
+Write-Host "`n[STAGE 1] Creating EKS Cluster..." -ForegroundColor Yellow
 Push-Location terraform
 
 try {
@@ -45,32 +45,8 @@ finally {
 }
 Write-Host "[SUCCESS] Stage 1 Complete: AWS Infrastructure built successfully." -ForegroundColor Green
 
-# ----------------- 3. Docker Build & Push (Stage 2) -----------------
-$registryUri = "${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com"
-Write-Host "`n[STAGE 2] Building and pushing Docker images to $registryUri..." -ForegroundColor Yellow
-
-# ECR Login
-Write-Host "Logging in to AWS ECR..." -ForegroundColor Gray
-aws ecr get-login-password --region $awsRegion | docker login --username AWS --password-stdin $registryUri
-
-# Build and Push Backend API
-Write-Host "Building Backend API image..." -ForegroundColor Gray
-docker build -t devops-copilot-backend ./backend-api
-docker tag devops-copilot-backend:latest "${registryUri}/devops-copilot-backend:latest"
-Write-Host "Pushing Backend API image to ECR..." -ForegroundColor Gray
-docker push "${registryUri}/devops-copilot-backend:latest"
-
-# Build and Push Discord Bot
-Write-Host "Building Discord Bot image..." -ForegroundColor Gray
-docker build -t devops-copilot-bot ./discord-bot
-docker tag devops-copilot-bot:latest "${registryUri}/devops-copilot-bot:latest"
-Write-Host "Pushing Discord Bot image to ECR..." -ForegroundColor Gray
-docker push "${registryUri}/devops-copilot-bot:latest"
-
-Write-Host "[SUCCESS] Stage 2 Complete: Docker images pushed to ECR." -ForegroundColor Green
-
-# ----------------- 4. Kubernetes Deployment (Stage 3) -----------------
-Write-Host "`n[STAGE 3] Deploying applications to EKS Cluster..." -ForegroundColor Yellow
+# ----------------- 3. Kubernetes Deployment (Stage 2) -----------------
+Write-Host "`n[STAGE 2] Deploying applications to EKS Cluster..." -ForegroundColor Yellow
 
 # Connect kubeconfig
 Write-Host "Connecting kubectl to EKS..." -ForegroundColor Gray
@@ -105,16 +81,16 @@ kubectl create secret generic copilot-secrets `
 Write-Host "Applying cluster RBAC configuration..." -ForegroundColor Gray
 kubectl apply -f kubernetes/sre-rbac.yaml
 
-# Modify deployment manifest in-memory to inject ECR URIs and deploy
+# Modify deployment manifest in-memory to inject Docker Hub Registry prefix and deploy
 Write-Host "Deploying SRE backend and Discord bot..." -ForegroundColor Gray
 $deploymentManifest = Get-Content "kubernetes/sre-deployments.yaml" -Raw
-$deploymentManifest = $deploymentManifest -replace "image: devops-copilot-backend:latest", "image: ${registryUri}/devops-copilot-backend:latest"
-$deploymentManifest = $deploymentManifest -replace "image: devops-copilot-bot:latest", "image: ${registryUri}/devops-copilot-bot:latest"
+$deploymentManifest = $deploymentManifest -replace "image: devops-copilot-backend:latest", "image: ${dockerHubUser}/devops-copilot-backend:latest"
+$deploymentManifest = $deploymentManifest -replace "image: devops-copilot-bot:latest", "image: ${dockerHubUser}/devops-copilot-bot:latest"
 
 # Pipe modified manifest directly into kubectl
 $deploymentManifest | kubectl apply -f -
 
-Write-Host "[SUCCESS] Stage 3 Complete: Applications deployed successfully." -ForegroundColor Green
+Write-Host "[SUCCESS] Stage 2 Complete: Applications deployed successfully." -ForegroundColor Green
 
 Write-Host "`n=============================================" -ForegroundColor Green
 Write-Host "Deployment completed successfully." -ForegroundColor Green
