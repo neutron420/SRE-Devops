@@ -159,6 +159,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="🔍 SRE Operations",
         value=(
+            "**/deployments** - Lists all active deployments in your Kubernetes namespace\n"
             "**/diagnose `[service]`** - Performs multi-agent LangGraph diagnostics on a service (e.g. `payment-service`)\n"
             "**/logs `[service]`** - Fetches recent logs from Kubernetes pods of the service\n"
             "**/explain-error `[error]`** - Explains a custom stack trace or log entry, detailing causes & remedies"
@@ -234,6 +235,38 @@ async def setup_command(interaction: discord.Interaction, kubeconfig_file: disco
     except Exception as e:
         logger.error(f"Setup command failed: {str(e)}")
         await interaction.followup.send(content=f"❌ Error uploading configuration: {str(e)}")
+
+
+@bot.tree.command(name="deployments", description="Lists all active deployments in your Kubernetes cluster namespace.")
+async def deployments_command(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        headers = {"X-Guild-ID": str(interaction.guild_id)} if interaction.guild_id else {}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{BACKEND_API_URL}/deployments", headers=headers)
+            
+        if resp.status_code == 200:
+            deployments = resp.json()
+            if not deployments:
+                await interaction.followup.send(content="📂 No active deployments found in your namespace.")
+                return
+                
+            embed = discord.Embed(
+                title="📂 Active Kubernetes Deployments",
+                description="Discovered the following services/deployments in your EKS cluster namespace:",
+                color=discord.Color.from_rgb(46, 134, 193)
+            )
+            
+            deploy_list = "\n".join([f"• `{d}`" for d in deployments])
+            embed.add_field(name="Active Deployments", value=deploy_list, inline=False)
+            embed.set_footer(text="Use /diagnose <service> to check pod health and run AI analysis.")
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send(content=f"❌ Failed to retrieve deployments: Backend returned status {resp.status_code}.")
+    except Exception as e:
+        logger.error(f"Deployments command failed: {str(e)}")
+        await interaction.followup.send(content="❌ Network error: Could not contact SRE Assistant backend.")
 
 
 @bot.tree.command(name="status", description="Checks the health and status of the Copilot system services.")
