@@ -86,6 +86,15 @@ resource "aws_security_group" "copilot" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # HTTP Landing Page
+  ingress {
+    description = "HTTP Landing Page"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # FastAPI Backend
   ingress {
     description = "FastAPI Backend API"
