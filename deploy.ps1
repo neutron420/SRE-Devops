@@ -157,6 +157,7 @@ $includeFiles = @(
     "kube",
     "landing/Dockerfile",
     "landing/.dockerignore",
+    "landing/pnpm-workspace.yaml",
     "landing/eslint.config.mjs",
     "landing/package.json",
     "landing/pnpm-lock.yaml",
