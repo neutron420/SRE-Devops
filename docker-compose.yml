@@ -90,6 +90,19 @@ services:
     depends_on:
       - prometheus
 
+  landing:
+    build:
+      context: ./landing
+      dockerfile: Dockerfile
+    container_name: copilot-landing
+    restart: unless-stopped
+    ports:
+      - "80:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend-api:8000
+    depends_on:
+      - backend-api
+
 volumes:
   postgres_data:
   chroma_data:

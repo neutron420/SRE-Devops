@@ -10,6 +10,7 @@ All services run on a **single EC2 t3.small instance** via Docker Compose:
 
 ```text
 EC2 Instance (t3.small — 2 vCPU, 2GB RAM)
+├── Landing Page (Next.js)    → Port 80
 ├── Backend API (FastAPI)     → Port 8000
 ├── Discord Bot               → Internal only
 ├── PostgreSQL                → Port 5432
@@ -59,6 +60,7 @@ This script automates everything:
 ## 🔐 After Deployment
 
 ### Access Your Services
+- **Landing Page**: `http://<EC2_IP>` (Port 80)
 - **API Docs**: `http://<EC2_IP>:8000/docs`
 - **Health Check**: `http://<EC2_IP>:8000/health`
 - **Grafana**: `http://<EC2_IP>:3000` (admin/admin)

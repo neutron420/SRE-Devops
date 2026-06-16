@@ -154,7 +154,22 @@ $includeFiles = @(
     "discord-bot/bot.py",
     "monitoring",
     "docs",
-    "kube"
+    "kube",
+    "landing/Dockerfile",
+    "landing/.dockerignore",
+    "landing/eslint.config.mjs",
+    "landing/package.json",
+    "landing/pnpm-lock.yaml",
+    "landing/next.config.mjs",
+    "landing/postcss.config.mjs",
+    "landing/tsconfig.json",
+    "landing/components.json",
+    "landing/app",
+    "landing/components",
+    "landing/hooks",
+    "landing/lib",
+    "landing/public",
+    "landing/styles"
 )
 
 # Create a clean staging directory for upload
