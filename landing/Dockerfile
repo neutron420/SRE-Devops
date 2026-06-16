@@ -8,7 +8,10 @@ RUN corepack enable
 WORKDIR /app
 
 # Copy dependency files
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
+
+# Disable minimum release age check
+RUN pnpm config set minimum-release-age 0
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile

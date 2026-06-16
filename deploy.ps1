@@ -158,6 +158,7 @@ $includeFiles = @(
     "landing/Dockerfile",
     "landing/.dockerignore",
     "landing/pnpm-workspace.yaml",
+    "landing/.npmrc",
     "landing/eslint.config.mjs",
     "landing/package.json",
     "landing/pnpm-lock.yaml",
