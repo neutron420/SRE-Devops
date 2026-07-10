@@ -44,9 +44,14 @@ finally {
 Write-Host "`n[STEP 2/2] Cleaning up local files..." -ForegroundColor Yellow
 $keyFile = "terraform\sre-copilot-key.pem"
 if (Test-Path $keyFile) {
+    # Reset file permissions (Terraform sets it to read-only 0400 which blocks deletion on Windows)
+    if ($IsWindows -or $env:OS -like "*Windows*") {
+        icacls.exe $keyFile /reset | Out-Null
+    }
     Remove-Item $keyFile -Force
     Write-Host "  Removed SSH key: $keyFile" -ForegroundColor Gray
 }
+
 
 # Clean up terraform plan file
 $planFile = "terraform\tfplan"
